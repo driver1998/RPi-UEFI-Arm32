@@ -19,6 +19,7 @@
 #include <Library/IoLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/PcdLib.h>
+#include <Library/HobLib.h>
 
 #include <Pi2Board.h>
 #include <BcmMailbox.h>
@@ -48,7 +49,7 @@ ArmPlatformGetVirtualMemoryMap (
 
   ASSERT(VirtualMemoryMap != NULL);
 
-  DEBUG((EFI_D_VERBOSE, "Enter: ArmPlatformGetVirtualMemoryMap\n"));
+  DEBUG((DEBUG_INIT, "Enter: ArmPlatformGetVirtualMemoryMap\n"));
 
   VirtualMemoryTable = (ARM_MEMORY_REGION_DESCRIPTOR*)AllocatePages(EFI_SIZE_TO_PAGES (sizeof(ARM_MEMORY_REGION_DESCRIPTOR) * MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS));
   if (VirtualMemoryTable == NULL) {
@@ -61,7 +62,7 @@ ArmPlatformGetVirtualMemoryMap (
     CacheAttributes = DDR_ATTRIBUTES_UNCACHED;
   }
 
-  DEBUG((EFI_D_VERBOSE, "CacheAttributes=0x%d\n", CacheAttributes));
+  DEBUG((DEBUG_INIT, "CacheAttributes=0x%d\n", CacheAttributes));
 
   ASSERT(FixedPcdGet32(PcdBootRegionSize) != 0);
 
@@ -90,8 +91,8 @@ ArmPlatformGetVirtualMemoryMap (
   VirtualMemoryTable[Index].Attributes     = ARM_REGISTERS_ATTRIBUTES;
 
   // GPU Shared memory: starts at the top of system memory
-  VirtualMemoryTable[++Index].PhysicalBase = PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize);
-  VirtualMemoryTable[Index].VirtualBase    = PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize);
+  VirtualMemoryTable[++Index].PhysicalBase = PcdGet64 (PcdGpuMemoryBase);
+  VirtualMemoryTable[Index].VirtualBase    = PcdGet64 (PcdGpuMemoryBase);
   VirtualMemoryTable[Index].Length         = PcdGet64 (PcdGpuMemorySize);
   VirtualMemoryTable[Index].Attributes     = GPU_SHARED_MEMORY_ATTRIBUTES;
 

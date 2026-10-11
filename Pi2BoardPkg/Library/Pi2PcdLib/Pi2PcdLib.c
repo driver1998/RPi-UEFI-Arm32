@@ -32,6 +32,7 @@ PCD_DYNAMIC_VALUE DynamicPCDValue[] =
 {
     { PcdToken(PcdSystemMemorySize), 0, 0 },
     { PcdToken(PcdGpuMemorySize), 0, 0 },
+    { PcdToken(PcdGpuMemoryBase), 0, 0 },
 };
 
 extern MAILBOX_GET_MEMORY MbGetMemory;
@@ -89,11 +90,12 @@ LibPcdGet64 (
                     // Assert immediately because this means VC firmware has failed
                     ASSERT(FALSE);
                 }
-                DEBUG((DEBUG_VERBOSE, "LibPcdGet64: PcdSystemMemorySize=0x%8.8X\n", PcdGet64(PcdSystemMemorySize)));
+                DEBUG((DEBUG_INIT, "LibPcdGet64: PcdSystemMemorySize=0x%8.8X\n", PcdGet64(PcdSystemMemorySize)));
             }
             break;
         // Query VC GPU Memory Size
         case PcdToken(PcdGpuMemorySize):
+        case PcdToken(PcdGpuMemoryBase):
             {
                 EFI_STATUS Status;
                 ZeroMem((void*)&MbGetMemory, sizeof(MbGetMemory));
@@ -103,12 +105,14 @@ LibPcdGet64 (
 
                 Status = MailboxProperty(MAILBOX_CHANNEL_PROPERTY_ARM_VC, (MAILBOX_HEADER*)&MbGetMemory);
                 if (Status == EFI_SUCCESS) {
+                    PcdSet64(PcdGpuMemoryBase, MbGetMemory.BaseAddress);
                     PcdSet64(PcdGpuMemorySize, MbGetMemory.Size);
                 } else {
                     // Assert immediately because this means VC firmware has failed
                     ASSERT(FALSE);
                 }
-                DEBUG((DEBUG_VERBOSE, "LibPcdGet64: PcdGpuMemorySize=0x%8.8X\n", PcdGet64(PcdGpuMemorySize)));
+                DEBUG((DEBUG_INIT, "LibPcdGet64: PcdGpuMemoryBase=0x%8.8X\n", PcdGet64(PcdGpuMemoryBase)));
+                DEBUG((DEBUG_INIT, "LibPcdGet64: PcdGpuMemorySize=0x%8.8X\n", PcdGet64(PcdGpuMemorySize)));
             }
             break;
         default:

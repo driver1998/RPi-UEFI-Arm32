@@ -171,8 +171,8 @@ READ_LOCK_STATUS   = TRUE
   # IN GENERAL IT IS MANDATORY THAT DEVICES USE THE ARM GIC FOR INTERRUPTS
   # AND THE ARM GIT FOR TIMERS FOR WINDOWS SUPPORT.
   #
-  INF Pi2BoardPkg/Drivers/InterruptDxe/InterruptDxe.inf
-#  INF ArmPkg/Drivers/ArmGic/ArmGicDxe.inf
+  # INF Pi2BoardPkg/Drivers/InterruptDxe/InterruptDxe.inf
+  INF ArmPkg/Drivers/ArmGic/ArmGicDxe.inf
   INF ArmPkg/Drivers/TimerDxe/TimerDxe.inf
 
   #

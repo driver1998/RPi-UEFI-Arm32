@@ -46,6 +46,7 @@
 
   HiiLib|MdeModulePkg/Library/UefiHiiLib/UefiHiiLib.inf
   UefiHiiServicesLib|MdeModulePkg/Library/UefiHiiServicesLib/UefiHiiServicesLib.inf
+  ArmGicLib|ArmPkg/Drivers/ArmGic/ArmGicLib.inf
 
 !if $(TARGET) == RELEASE
   # Comment/Uncomment to enable processing DEBUG messages and sending
@@ -367,10 +368,9 @@
   gPi2BoardTokenSpaceGuid.PcdBootRegionBase|0x0
   gPi2BoardTokenSpaceGuid.PcdBootRegionSize|0x200000
 
-  gArmTokenSpaceGuid.PcdSystemMemoryBase|0x00200000
-
-  # Size of the region used by UEFI in permanent memory (Reserved 16MB)
-  gArmPlatformTokenSpaceGuid.PcdSystemMemoryUefiRegionSize|0x01000000
+  gArmTokenSpaceGuid.PcdSystemMemoryBase|0x00400000
+  # Size of the region used by UEFI in permanent memory (Reserved 64MB)
+  gArmPlatformTokenSpaceGuid.PcdSystemMemoryUefiRegionSize|0x04000000
 
   # Size of the region reserved for fixed address allocations (Reserved 32MB)
   gArmTokenSpaceGuid.PcdArmLinuxKernelMaxOffset|0x02000000
@@ -418,8 +418,8 @@
   # Therefore, these values are unused and set to point to unused memory in case something trys to
   # use it.
   #
-  gArmTokenSpaceGuid.PcdGicDistributorBase|0x000EF000
-  gArmTokenSpaceGuid.PcdGicInterruptInterfaceBase|0x000EF100
+  gArmTokenSpaceGuid.PcdGicDistributorBase|0xFF841000
+  gArmTokenSpaceGuid.PcdGicInterruptInterfaceBase|0xFF842000
 
   # Mailbox base for the Multi-Processor Parking Protocol (uses one 4Kb page per core, thus 16Kb)
   #
@@ -566,11 +566,7 @@
   #
   ArmPlatformPkg/Sec/Sec.inf {
     <LibraryClasses>
-      # Since the 2836 doesn't have an ARM GIC we use the BCM "stub" library instead to provide only
-      # enough functionality to be able to get the platform started and support multi-processor through
-      # the MP Parking Protocol. The BCM interrupt controller has no secure/none-secure knowledge.
-      # Real interrupts for EFI are supported on the BCM part in the Interrupt DXE implementation.
-      ArmGicLib|Pi2BoardPkg/Library/BcmGicLib/BcmGicLib.inf
+      ArmGicLib|ArmPkg/Drivers/ArmGic/ArmGicLib.inf
 
       # Always use UART1 so we can verify both UART0 & UART1 work together when UART0 is enabled.
       SerialPortLib|Pi3BoardPkg/Library/SerialPortLib/SerialPortLib.inf
@@ -590,11 +586,7 @@
       # Use the implementation which has the none-secure bits.
       ArmLib|ArmPkg/Library/ArmLib/ArmV7/ArmV7Lib.inf
 
-      # Since the 2836 doesn't have an ARM GIC we use the BCM "stub" library instead to provide only
-      # enough functionality to be able to get the platform started and support multi-processor through
-      # the MP Parking Protocol. The BCM interrupt controller has no secure/none-secure knowledge.
-      # Real interrupts for EFI are supported on the BCM part in the Interrupt DXE implementation.
-      ArmGicLib|Pi2BoardPkg/Library/BcmGicLib/BcmGicLib.inf
+      ArmGicLib|ArmPkg/Drivers/ArmGic/ArmGicLib.inf
 
       ArmPlatformGlobalVariableLib|ArmPlatformPkg/Library/ArmPlatformGlobalVariableLib/PrePi/PrePiArmPlatformGlobalVariableLib.inf
   }
@@ -656,9 +648,8 @@
   #
   # IN GENERAL IT IS MANDATORY THAT DEVICES USE THE ARM GIC FOR INTERRUPTS
   # AND THE ARM GIT FOR TIMERS FOR WINDOWS SUPPORT.
-  #
-  Pi2BoardPkg/Drivers/InterruptDxe/InterruptDxe.inf
-#  ArmPkg/Drivers/ArmGic/ArmGicDxe.inf
+  # 
+  ArmPkg/Drivers/ArmGic/ArmGicDxe.inf
   ArmPkg/Drivers/TimerDxe/TimerDxe.inf
 
   #

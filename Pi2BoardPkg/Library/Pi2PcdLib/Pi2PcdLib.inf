@@ -41,4 +41,5 @@
 [Pcd]
   gArmTokenSpaceGuid.PcdSystemMemorySize
   gPi2BoardTokenSpaceGuid.PcdGpuMemorySize
+  gPi2BoardTokenSpaceGuid.PcdGpuMemoryBase
 

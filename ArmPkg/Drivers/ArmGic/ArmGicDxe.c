@@ -46,6 +46,7 @@ InterruptDxeInitialize (
   ARM_GIC_ARCH_REVISION Revision;
 
   Revision = ArmGicGetSupportedArchRevision ();
+  DEBUG ((DEBUG_INIT, "ArmGicGetSupportedArchRevision = %d\n", Revision));
 
   if (Revision == ARM_GIC_ARCH_REVISION_2) {
     Status = GicV2DxeInitialize (ImageHandle, SystemTable);

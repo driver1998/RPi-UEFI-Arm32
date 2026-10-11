@@ -125,6 +125,8 @@ PrePiMain (
   InitializeDebugAgent (DEBUG_AGENT_INIT_POSTMEM_SEC, NULL, NULL);
   SaveAndSetDebugTimerInterrupt (TRUE);
 
+    DEBUG ((DEBUG_INIT, " Declare the PI/UEFI memory region\n"));
+
   // Declare the PI/UEFI memory region
   HobList = HobConstructor (
     (VOID*)UefiMemoryBase,
@@ -133,12 +135,17 @@ PrePiMain (
     (VOID*)StacksBase  // The top of the UEFI Memory is reserved for the stacks
     );
   PrePeiSetHobList (HobList);
+  
+    DEBUG ((DEBUG_INIT, " Initialize MMU and Memory HOBs (Resource Descriptor HOBs)\n"));
 
   // Initialize MMU and Memory HOBs (Resource Descriptor HOBs)
   Status = MemoryPeim (UefiMemoryBase, FixedPcdGet32 (PcdSystemMemoryUefiRegionSize));
   ASSERT_EFI_ERROR (Status);
 
   // Create the Stacks HOB (reserve the memory for all stacks)
+  
+    DEBUG ((DEBUG_INIT, " Create the Stacks HOB\n"));
+
   if (ArmIsMpCore ()) {
     StacksSize = PcdGet32 (PcdCPUCorePrimaryStackSize) +
                  ((FixedPcdGet32 (PcdCoreCount) - 1) * FixedPcdGet32 (PcdCPUCoreSecondaryStackSize));
@@ -146,6 +153,8 @@ PrePiMain (
     StacksSize = PcdGet32 (PcdCPUCorePrimaryStackSize);
   }
   BuildStackHob (StacksBase, StacksSize);
+
+      DEBUG ((DEBUG_INIT, " Declare the Global Variable HOB\n"));
 
   // Declare the Global Variable HOB
   BuildGlobalVariableHob (GlobalVariableBase, FixedPcdGet32 (PcdPeiGlobalVariableSize));
@@ -168,6 +177,8 @@ PrePiMain (
       BuildGuidDataHob (&gArmMpCoreInfoGuid, ArmCoreInfoTable, sizeof (ARM_CORE_INFO) * ArmCoreCount);
     }
   }
+
+        DEBUG ((DEBUG_INIT, " ArmPlatformGetBootMode\n"));
 
   // Set the Boot Mode
   SetBootMode (ArmPlatformGetBootMode ());

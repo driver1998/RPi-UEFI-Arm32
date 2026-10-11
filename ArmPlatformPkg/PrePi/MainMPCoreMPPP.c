@@ -33,6 +33,7 @@ PrimaryMain (
 
   // Enable the GIC Distributor
   ArmGicEnableDistributor(PcdGet32(PcdGicDistributorBase));
+  DEBUG ((DEBUG_INIT, "(MPPP)ArmGicEnableDistributor\n"));
 
   // In some cases, the secondary cores are waiting for an SGI from the next stage boot loader to resume their initialization
   if (PcdGetBool(PcdSendSgiToBringUpSecondaryCores)) {
@@ -40,6 +41,7 @@ PrimaryMain (
     ArmGicSendSgiTo (PcdGet32(PcdGicDistributorBase), ARM_GIC_ICDSGIR_FILTER_EVERYONEELSE, 0x0E, PcdGet32 (PcdGicSgiIntId));
   }
 
+  DEBUG ((DEBUG_INIT, "(MPPP)Before PrePiMain\n"));
   PrePiMain (UefiMemoryBase, StacksBase, GlobalVariableBase, StartTimeStamp);
 
   // We must never return

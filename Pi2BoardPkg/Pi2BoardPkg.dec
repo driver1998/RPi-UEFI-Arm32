@@ -64,5 +64,6 @@
   gPi2BoardTokenSpaceGuid.PcdRuntimeMuxingEnabled|FALSE|BOOLEAN|0x00000221
 
 [PcdsDynamic.common]
-  gPi2BoardTokenSpaceGuid.PcdGpuMemorySize|0|UINT64|0x00000230
+  gPi2BoardTokenSpaceGuid.PcdGpuMemoryBase|0|UINT64|0x00000230
+  gPi2BoardTokenSpaceGuid.PcdGpuMemorySize|0|UINT64|0x00000240
 
