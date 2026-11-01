@@ -37,10 +37,17 @@
 //
 // Set to 1 to enable the data cache on top of the MMU.
 //
-// Bisecting showed that with the data cache enabled the platform continues to
-// run but the memory contents read back by the debug prints start being garbage
-// a few lines later (identical symptom on the mini UART and on the PL011, so it
-// is not a serial link problem). Left disabled until the cause is understood.
+// Bisecting on a Pi 4 gave:
+//   DRAM mapped Write-Back  -> the contents of read-only strings start coming
+//                              back modified a few debug prints into the boot,
+//                              i.e. memory is really clobbered (making the
+//                              mappings Inner Shareable changed nothing)
+//   DRAM mapped Write-Through -> no corruption at all, the dcache self test
+//                              below passes and the boot reaches PrePi's
+//                              ArmPlatformGetBootMode, but then stalls (see the
+//                              comment further down)
+// The data cache is therefore left off for now so that console work runs on a
+// known-good base; the Write-Through configuration is kept in Pi2Board.h.
 //
 #define ENABLE_DATA_CACHE          0
 
@@ -368,6 +375,29 @@ ArmConfigureMmu (
   DEBUG ((DEBUG_INIT, "ArmConfigureMmu: enabling data cache\n"));
   ArmEnableDataCache();
   DEBUG ((DEBUG_INIT, "ArmConfigureMmu: data cache on, SCTLR=0x%08x\n", ArmReadSctlr ()));
+
+  //
+  // Sanity check the newly enabled data cache: fill a buffer and read it back,
+  // and print a literal so that a corrupted read-only string shows up right
+  // here instead of several prints later.
+  //
+  {
+    volatile UINT32  Scratch[64];
+    UINTN            Index;
+    UINT32           Failures;
+
+    Failures = 0;
+    for (Index = 0; Index < 64; Index++) {
+      Scratch[Index] = 0xA5A50000 + (UINT32)Index;
+    }
+    for (Index = 0; Index < 64; Index++) {
+      if (Scratch[Index] != (0xA5A50000 + (UINT32)Index)) {
+        Failures++;
+      }
+    }
+    DEBUG ((DEBUG_INIT, "ArmConfigureMmu: dcache test %d/64 words wrong, rodata: %a\n",
+            Failures, "if this whole line is readable the cache is currently fine"));
+  }
 #else
   DEBUG ((DEBUG_INIT, "ArmConfigureMmu: data cache left disabled (BCM2711 workaround)\n"));
 #endif

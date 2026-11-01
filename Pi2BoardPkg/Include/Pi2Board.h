@@ -18,7 +18,16 @@
 #define __PI2BOARD_PLATFORM_H__
 
 // DDR attributes
-#define DDR_ATTRIBUTES_CACHED             ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK
+//
+// Write-Through rather than Write-Back while bringing BCM2711 up. With the data
+// cache enabled and DRAM mapped write-back, the contents of a read-only string
+// in the firmware volume start coming back modified a few debug prints into the
+// boot, i.e. real memory is being clobbered rather than a stale line being read
+// (making the mappings Inner Shareable did not change it). Write-Through keeps
+// every line clean, so no dirty line is ever written back, while still giving
+// read caching. Switch back to WRITE_BACK once the corruption is understood.
+//
+#define DDR_ATTRIBUTES_CACHED             ARM_MEMORY_REGION_ATTRIBUTE_WRITE_THROUGH
 #define DDR_ATTRIBUTES_UNCACHED           ARM_MEMORY_REGION_ATTRIBUTE_UNCACHED_UNBUFFERED
 
 #define BOOT_IMAGE_ATTRIBUTES             CacheAttributes
