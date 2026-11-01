@@ -152,11 +152,18 @@ ArmPlatformSecInitialize (
         (GPIO_FSEL_MASK << (18 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |
         (GPIO_FSEL_MASK << (19 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN));
 
+      //
+      // GPIO14/15 are driven as ALT0 = TXD0/RXD0 of the PL011 UART, which is the
+      // debug console used by SerialPortLib. They previously carried the AUX
+      // mini UART (ALT5 = TXD1/RXD1); the mini UART baud rate follows the
+      // VideoCore core clock and becomes unusable once BCM2711 retunes it.
+      // The physical pins are unchanged, so the same USB-serial adapter works.
+      //
       const UINT32 fixedPinsFunctionMask =
         (GPIO_FSEL_INPUT << (12 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |      // GPIO12
         (GPIO_FSEL_INPUT << (13 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |      // GPIO13
-        (GPIO_FSEL_ALT5 << (14 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |       // UART1_TX
-        (GPIO_FSEL_ALT5 << (15 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |       // UART1_RX
+        (GPIO_FSEL_ALT0 << (14 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |       // UART TXD0 (PL011)
+        (GPIO_FSEL_ALT0 << (15 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |       // UART RXD0 (PL011)
         (GPIO_FSEL_INPUT << (16 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |      // GPIO16
         (GPIO_FSEL_INPUT << (17 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |      // GPIO17
         (GPIO_FSEL_INPUT << (18 % GPIO_FSEL_PINS_PER_REGISTER * GPIO_FSEL_BITS_PER_PIN)) |      // GPIO18

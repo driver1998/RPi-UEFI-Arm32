@@ -451,6 +451,40 @@ ArmMmuEnabled (
   VOID
   );
 
+//
+// Diagnostics only: expose the system control registers that determine how
+// translation table entries are interpreted.
+//
+UINT32
+EFIAPI
+ArmReadDacr (
+  VOID
+  );
+
+UINT32
+EFIAPI
+ArmReadTtbr0Raw (
+  VOID
+  );
+
+UINT32
+EFIAPI
+ArmReadPrrr (
+  VOID
+  );
+
+UINT32
+EFIAPI
+ArmReadNmrr (
+  VOID
+  );
+
+UINT32
+EFIAPI
+ArmReadClidr (
+  VOID
+  );
+
 VOID
 EFIAPI
 ArmEnableBranchPrediction (

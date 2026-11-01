@@ -147,6 +147,13 @@ ArmPlatformInitialize(
     DEBUG((EFI_D_INIT, "Core%d MpId=0x%8.8X PriCore=%d StackPtr=0x%8.8p\n\r",
            GET_CORE_ID(MpId), MpId, ArmPlatformIsPrimaryCore(MpId), &MpId));
 
+    // Report the CPU mode and whether the boot firmware left the MMU on. On
+    // BCM2711 the VideoCore firmware starts the ARM in a different state than on
+    // BCM2837, and an unexpected mode or a pre-enabled MMU changes which
+    // translation registers PrePi ends up programming.
+    DEBUG((EFI_D_INIT, "Core%d CPSR mode=0x%x MMU enabled=%d\n\r",
+           GET_CORE_ID(MpId), ArmReadCPSRMode(), (UINT32)ArmMmuEnabled()));
+
     // Virtualization is not currently supported by the OS
     // Switch to supervisor mode if booting in hypervisor mode
     {
@@ -237,6 +244,52 @@ ArmPlatformInitialize(
                         "Setting ARM CPU to %d Hz\n", 
                         MbGetMaxCR.Rate));
                 }
+            }
+        }
+
+        //
+        // BCM2711: keep the mini UART (AUX) baud rate valid.
+        //
+        // The debug console is the AUX mini UART, whose baud clock is the
+        // VideoCore core clock. SerialPortInitialize() programmed the baud rate
+        // divisor from the core clock it queried *before* the ARM clock was
+        // changed above. If the firmware retunes the core clock (it can, as a
+        // side effect of changing the ARM clock, and its DVFS can do it later
+        // on its own), the divisor becomes stale and the console starts emitting
+        // framing-error garbage: whole lines stay readable and then a burst of
+        // bytes above 0x7F comes out.
+        //
+        // Re-query the core clock and reprogram the divisor, and report both
+        // values so a drifting clock is visible on the console.
+        //
+        {
+            MAILBOX_GET_CLOCK_RATE MbCoreCr;
+            EFI_STATUS             CoreStatus;
+            UINT32                 CoreRate;
+            UINT32                 BaudRate;
+            UINT32                 BaudReg;
+
+            ZeroMem((void*)&MbCoreCr, sizeof(MbCoreCr));
+            MbCoreCr.Header.BufferSize = sizeof(MbCoreCr);
+            MbCoreCr.Header.TagID = TAG_GET_CLOCK_RATE;
+            MbCoreCr.Header.TagLength = 8;
+            MbCoreCr.ClockId = CLOCK_ID_CORE;
+
+            CoreStatus = MailboxProperty(
+                MAILBOX_CHANNEL_PROPERTY_ARM_VC,
+                (MAILBOX_HEADER*)&MbCoreCr
+                );
+            if (!EFI_ERROR(CoreStatus) && (MbCoreCr.Rate != 0)) {
+                CoreRate = MbCoreCr.Rate;
+                BaudRate = 115200;                  // matches PcdUartDefaultBaudRate
+                BaudReg  = (CoreRate / 8 / BaudRate) - 1;
+                MmioWrite32(AUX_MU_BAUD_REG, BaudReg);
+                DEBUG((
+                    EFI_D_INIT,
+                    "Core clock=%d Hz, mini UART baud divisor=0x%x\n",
+                    CoreRate, BaudReg));
+            } else {
+                DEBUG((DEBUG_ERROR, "Fail to query core clock rate\n"));
             }
         }
     }

@@ -37,10 +37,12 @@ InitMmu (
 
   // Get Virtual Memory Map from the Platform Library
   ArmPlatformGetVirtualMemoryMap (&MemoryTable);
+  DEBUG ((DEBUG_INIT, "InitMmu: MemoryTable=0x%08x\n", (UINT32)(UINTN)MemoryTable));
 
   //Note: Because we called PeiServicesInstallPeiMemory() before to call InitMmu() the MMU Page Table resides in
   //      DRAM (even at the top of DRAM as it is the first permanent memory allocation)
   Status = ArmConfigureMmu (MemoryTable, &TranslationTableBase, &TranslationTableSize);
+  DEBUG ((DEBUG_INIT, "InitMmu: ArmConfigureMmu returned 0x%x\n", (UINT32)Status));
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "Error: Failed to enable MMU\n"));
   }

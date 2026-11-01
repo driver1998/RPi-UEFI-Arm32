@@ -24,6 +24,26 @@
 #include "ArmV7Lib.h"
 #include "ArmLibPrivate.h"
 
+//
+// BCM2711 (Raspberry Pi 4) bring-up switch.
+//
+// Set to 1 to enable the instruction cache on top of the MMU, which is what the
+// generic ArmLib does. On Cortex-A72 running in AArch32 that stalls the core the
+// moment SCTLR.I is set (see the comment in ArmConfigureMmu()), so it is left
+// disabled for now: running with I=0 is functionally correct, only slower.
+//
+#define ENABLE_INSTRUCTION_CACHE   0
+
+//
+// Set to 1 to enable the data cache on top of the MMU.
+//
+// Bisecting showed that with the data cache enabled the platform continues to
+// run but the memory contents read back by the debug prints start being garbage
+// a few lines later (identical symptom on the mini UART and on the PL011, so it
+// is not a serial link problem). Left disabled until the cause is understood.
+//
+#define ENABLE_DATA_CACHE          0
+
 UINT32
 ConvertSectionAttributesToPageAttributes (
   IN UINT32   SectionAttributes,
@@ -223,11 +243,15 @@ ArmConfigureMmu (
   UINT32                        TTBRAttributes;
 
   // Allocate pages for translation table.
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: AllocatePages(%d) for translation table\n",
+          (UINT32)EFI_SIZE_TO_PAGES (TRANSLATION_TABLE_SECTION_SIZE + TRANSLATION_TABLE_SECTION_ALIGNMENT)));
   TranslationTable = AllocatePages (EFI_SIZE_TO_PAGES (TRANSLATION_TABLE_SECTION_SIZE + TRANSLATION_TABLE_SECTION_ALIGNMENT));
   if (TranslationTable == NULL) {
+    DEBUG ((DEBUG_INIT, "ArmConfigureMmu: AllocatePages FAILED\n"));
     return RETURN_OUT_OF_RESOURCES;
   }
   TranslationTable = (VOID*)(((UINTN)TranslationTable + TRANSLATION_TABLE_SECTION_ALIGNMENT_MASK) & ~TRANSLATION_TABLE_SECTION_ALIGNMENT_MASK);
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: TranslationTable=0x%08x\n", (UINT32)(UINTN)TranslationTable));
 
   if (TranslationTableBase != NULL) {
     *TranslationTableBase = TranslationTable;
@@ -242,6 +266,9 @@ ArmConfigureMmu (
   // By default, mark the translation table as belonging to a uncached region
   TranslationTableAttribute = ARM_MEMORY_REGION_ATTRIBUTE_UNCACHED_UNBUFFERED;
   while (MemoryTable->Length != 0) {
+    DEBUG ((DEBUG_INIT, "ArmConfigureMmu: region phys=0x%08x virt=0x%08x len=0x%08x attr=0x%x\n",
+            (UINT32)MemoryTable->PhysicalBase, (UINT32)MemoryTable->VirtualBase,
+            (UINT32)MemoryTable->Length, (UINT32)MemoryTable->Attributes));
     // Find the memory attribute for the Translation Table
     if (((UINTN)TranslationTable >= MemoryTable->PhysicalBase) && ((UINTN)TranslationTable <= MemoryTable->PhysicalBase - 1 + MemoryTable->Length)) {
       TranslationTableAttribute = MemoryTable->Attributes;
@@ -250,6 +277,8 @@ ArmConfigureMmu (
     FillTranslationTable (TranslationTable, MemoryTable);
     MemoryTable++;
   }
+
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: translation table filled\n"));
 
   // Translate the Memory Attributes into Translation Table Register Attributes
   if ((TranslationTableAttribute == ARM_MEMORY_REGION_ATTRIBUTE_UNCACHED_UNBUFFERED) ||
@@ -266,17 +295,21 @@ ArmConfigureMmu (
     return RETURN_UNSUPPORTED;
   }
 
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: TTBR attributes=0x%x, clean+invalidate caches\n", TTBRAttributes));
   ArmCleanInvalidateDataCache ();
   ArmInvalidateInstructionCache ();
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: caches cleaned, disabling caches+MMU\n"));
 
   ArmDisableDataCache ();
   ArmDisableInstructionCache();
   // TLBs are also invalidated when calling ArmDisableMmu()
   ArmDisableMmu ();
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: MMU disabled\n"));
 
   // Make sure nothing sneaked into the cache
   ArmCleanInvalidateDataCache ();
   ArmInvalidateInstructionCache ();
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: caches cleaned again, setting TTBR0\n"));
 
   ArmSetTTBR0 ((VOID *)(UINTN)(((UINTN)TranslationTable & ~TRANSLATION_TABLE_SECTION_ALIGNMENT_MASK) | (TTBRAttributes & 0x7F)));
 
@@ -302,9 +335,70 @@ ArmConfigureMmu (
                              DOMAIN_ACCESS_CONTROL_NONE( 2) |
                              DOMAIN_ACCESS_CONTROL_NONE( 1) |
                              DOMAIN_ACCESS_CONTROL_MANAGER(0));
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: TTBR0/DACR set, TTBR0 now=0x%08x\n",
+          (UINT32)(UINTN)ArmGetTTBR0BaseAddress ()));
 
-  ArmEnableInstructionCache();
-  ArmEnableDataCache();
+  // Dump a few section descriptors so a fault right after the MMU is enabled can
+  // be attributed to a specific mapping: [0] boot region, [4] system memory,
+  // [0x3B3] GPU memory, [0xFE0] SoC peripherals.
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: desc 0x000=0x%08x 0x004=0x%08x 0x3B3=0x%08x 0xFE0=0x%08x\n",
+          ((UINT32*)TranslationTable)[0x000], ((UINT32*)TranslationTable)[0x004],
+          ((UINT32*)TranslationTable)[0x3B3], ((UINT32*)TranslationTable)[0xFE0]));
+
+  //
+  // Enable the MMU first and the caches afterwards. This keeps every step
+  // separately observable on the serial console: if the platform stops right
+  // after "enabling MMU" then translation itself is broken, if it stops after
+  // the instruction or data cache has been turned on then only the cache
+  // attributes of the mappings are wrong.
+  //
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: SCTLR=0x%08x DACR=0x%08x TTBR0=0x%08x PRRR=0x%08x NMRR=0x%08x CLIDR=0x%08x\n",
+          ArmReadSctlr (), ArmReadDacr (), ArmReadTtbr0Raw (), ArmReadPrrr (), ArmReadNmrr (), ArmReadClidr ()));
+
+  //
+  // Enable the MMU first, then the data cache, then the instruction cache, so
+  // that the first cacheable access is issued at a known point and the step that
+  // stalls is visible on the serial console.
+  //
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: enabling MMU (caches still off)\n"));
   ArmEnableMmu();
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: MMU on, SCTLR=0x%08x\n", ArmReadSctlr ()));
+
+#if ENABLE_DATA_CACHE
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: enabling data cache\n"));
+  ArmEnableDataCache();
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: data cache on, SCTLR=0x%08x\n", ArmReadSctlr ()));
+#else
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: data cache left disabled (BCM2711 workaround)\n"));
+#endif
+
+#if ENABLE_INSTRUCTION_CACHE
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: enabling instruction cache\n"));
+  ArmEnableInstructionCache();
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: instruction cache on, SCTLR=0x%08x\n", ArmReadSctlr ()));
+#else
+  //
+  // BCM2711 workaround: do not enable the instruction cache.
+  //
+  // Measured on a Pi 4, with everything else verified correct
+  // (SCTLR=0x00C50838 -> M=0 C=0 I=0 B=0 A=0 TRE=0 AFE=0 before enabling,
+  //  CLIDR=0x0A200023 -> L1 I/D split + unified L2, TTBR0=0x3AEEC048,
+  //  DACR=0x3 = domain 0 manager, descriptors normal WB-WA / shareable device):
+  //
+  //   I=1 with M=0 .......... works
+  //   M=1 with I=0 .......... works (prints right after)
+  //   M=1 with I=0, C=1 ..... works (prints right after)
+  //   M=1 with I=1 .......... setting SCTLR.I makes the very next instruction
+  //                           fetch never complete: no further output and no
+  //                           exception dump
+  //
+  // So the MMU and the data cache are both fine and only the instruction cache
+  // trips the core over. Running with I=0 is architecturally correct, it just
+  // costs performance, so the port proceeds that way until the cause is found.
+  //
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: instruction cache left disabled (BCM2711 workaround)\n"));
+#endif
+
+  DEBUG ((DEBUG_INIT, "ArmConfigureMmu: done, MMU enabled=%d, UART alive after MMU\n", (UINT32)ArmMmuEnabled ()));
   return RETURN_SUCCESS;
 }

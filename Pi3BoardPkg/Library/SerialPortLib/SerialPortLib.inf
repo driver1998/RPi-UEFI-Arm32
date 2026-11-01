@@ -38,11 +38,17 @@
 [Packages]
   EmbeddedPkg/EmbeddedPkg.dec
   MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPlatformPkg/ArmPlatformPkg.dec
   Pi2BoardPkg/Pi2BoardPkg.dec
 
 [FixedPcd]
+  # PL011 base address (0xFE201000 on the BCM2711 high peripheral window)
+  gEfiMdeModulePkgTokenSpaceGuid.PcdSerialRegisterBase
+  # PL011 baud clock (48 MHz), independent of the VideoCore core clock
+  gArmPlatformTokenSpaceGuid.PL011UartClkInHz
+
   gEfiMdePkgTokenSpaceGuid.PcdUartDefaultBaudRate
   gEfiMdePkgTokenSpaceGuid.PcdUartDefaultDataBits
   gEfiMdePkgTokenSpaceGuid.PcdUartDefaultParity
   gEfiMdePkgTokenSpaceGuid.PcdUartDefaultStopBits
-

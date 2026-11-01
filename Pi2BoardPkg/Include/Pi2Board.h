@@ -26,13 +26,29 @@
 // Main system DRAM as defined by the PCD definitions of system memory.
 
 // Peripheral register block
+//
+// NOTE: On BCM2711 (Pi 4) the "high peripheral" window is 32 MB wide and spans
+// 0xFE000000-0xFFFFFFFF. Besides the legacy BCM283x peripherals (UART, GPIO,
+// SD/eMMC, ...) that window also contains what on BCM2836 lived in a separate
+// 256 MB region:
+//   0xFF800000  ARM local peripherals (mailboxes, IRQ/FIQ source registers)
+//   0xFF841000  GIC-400 distributor
+//   0xFF842000  GIC-400 CPU interface
+// With the window only 16 MB wide (ending at 0xFF000000) the GIC stays unmapped,
+// so the first GIC register access after the MMU has been enabled takes a
+// translation fault and the platform hangs without any output.
 #define SOC_REGISTERS_PHYSICAL_BASE       0xFE000000
-#define SOC_REGISTERS_PHYSICAL_LENGTH     0x01000000
+#define SOC_REGISTERS_PHYSICAL_LENGTH     0x02000000
 #define SOC_REGISTERS_ATTRIBUTES          ARM_MEMORY_REGION_ATTRIBUTE_DEVICE
 
 // ARM Core Peripheral register block
-#define ARM_REGISTERS_PHYSICAL_BASE       0x40000000
-#define ARM_REGISTERS_PHYSICAL_LENGTH     0x01000000
+//
+// On BCM2711 the ARM local peripherals moved from 0x40000000 to 0xFF800000.
+// The descriptor is kept so the memory map layout stays unchanged; it lies
+// inside the SOC_REGISTERS window above, which is harmless because both are
+// mapped as device memory.
+#define ARM_REGISTERS_PHYSICAL_BASE       0xFF800000
+#define ARM_REGISTERS_PHYSICAL_LENGTH     0x00800000
 #define ARM_REGISTERS_ATTRIBUTES          ARM_MEMORY_REGION_ATTRIBUTE_DEVICE
 
 // GPU Shared memory block

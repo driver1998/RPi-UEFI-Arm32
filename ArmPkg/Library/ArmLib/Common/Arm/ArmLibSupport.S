@@ -51,6 +51,11 @@ GCC_ASM_EXPORT(ArmCallSEV)
 GCC_ASM_EXPORT(ArmReadSctlr)
 GCC_ASM_EXPORT(ArmReadCpuActlr)
 GCC_ASM_EXPORT(ArmWriteCpuActlr)
+GCC_ASM_EXPORT(ArmReadDacr)
+GCC_ASM_EXPORT(ArmReadTtbr0Raw)
+GCC_ASM_EXPORT(ArmReadPrrr)
+GCC_ASM_EXPORT(ArmReadNmrr)
+GCC_ASM_EXPORT(ArmReadClidr)
 
 #------------------------------------------------------------------------------
 
@@ -189,6 +194,31 @@ ASM_PFX(ArmCallSEV):
 
 ASM_PFX(ArmReadSctlr):
   mrc     p15, 0, r0, c1, c0, 0      @ Read SCTLR into R0 (Read control register configuration data)
+  bx      lr
+
+//
+// Diagnostics only: read back the remaining system control registers that
+// decide how translation table entries are interpreted. Used to attribute an
+// MMU enable that immediately faults to a specific configuration bit.
+//
+ASM_PFX(ArmReadDacr):
+  mrc     p15, 0, r0, c3, c0, 0      @ Domain Access Control Register
+  bx      lr
+
+ASM_PFX(ArmReadTtbr0Raw):
+  mrc     p15, 0, r0, c2, c0, 0      @ TTBR0 including the attribute bits
+  bx      lr
+
+ASM_PFX(ArmReadPrrr):
+  mrc     p15, 0, r0, c10, c2, 0     @ Primary Region Remap Register
+  bx      lr
+
+ASM_PFX(ArmReadNmrr):
+  mrc     p15, 0, r0, c10, c2, 1     @ Normal Memory Remap Register
+  bx      lr
+
+ASM_PFX(ArmReadClidr):
+  mrc     p15, 1, r0, c0, c0, 1      @ Cache Level ID Register
   bx      lr
 
 ASM_PFX(ArmReadCpuActlr):

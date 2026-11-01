@@ -292,7 +292,13 @@
 !if $(TARGET) == RELEASE
   gEfiMdePkgTokenSpaceGuid.PcdDebugPropertyMask|0x21
 !else
-  gEfiMdePkgTokenSpaceGuid.PcdDebugPropertyMask|0x2f
+  #
+  # ASSERT_DEADLOOP (0x20) is dropped while bringing BCM2711 up: an ASSERT in a
+  # single driver would otherwise stop DXE before BDS, hiding everything that
+  # still works. Assertions are still printed. Restore 0x2f once the port is
+  # stable so that real bugs are caught.
+  #
+  gEfiMdePkgTokenSpaceGuid.PcdDebugPropertyMask|0x0f
 !endif
 
   #  DEBUG_INIT       0x00000001  // Initialization
@@ -318,7 +324,11 @@
   #
   # By default only enable init, error, warning and load debug prints to minimize
   # debug messages. Use "0x8FEF4DCF" for detailed debugging purposes.
-  gEfiMdePkgTokenSpaceGuid.PcdDebugPrintErrorLevel| 0x80000003 # 0x8FEF4DCF
+  #
+  # While bringing BCM2711 up, INFO/LOAD/DISPATCH/BM are enabled as well so that
+  # the DXE dispatch sequence and the point where the platform stops are visible
+  # on the serial console. Drop back to 0x80000003 for production builds.
+  gEfiMdePkgTokenSpaceGuid.PcdDebugPrintErrorLevel| 0x800404C7 # 0x80000003 quiet, 0x8FEF4DCF very verbose
 
   gEfiMdePkgTokenSpaceGuid.PcdReportStatusCodePropertyMask|0x07
 
@@ -455,13 +465,17 @@
 
   #
   # Timer interrupt routing.
-  # If the GIC is used, these two lines can be removed as the ARM package defaults
-  # are correct for the routing of the GIT interrupts to the GIC. Since the BCM2836 doesn't
-  # use the GIC, these values represent the bit number in the Timer Control and IRQ Source
-  # registers.
   #
-  gArmTokenSpaceGuid.PcdArmArchTimerSecIntrNum|0  #Interrupt Source/Vector 0
-  gArmTokenSpaceGuid.PcdArmArchTimerIntrNum|1     #Interrupt Source/Vector 1
+  # BCM2836/BCM2837 have no ARM GIC and used the Broadcom interrupt controller,
+  # where these values are the bit number in the Timer Control and IRQ Source
+  # registers (0 and 1). BCM2711 (Pi 4) does have an ARM GIC-400, so the ARM
+  # generic timer interrupts are the standard GIC PPIs and the ArmPkg defaults
+  # (29 = secure physical timer, 30 = non-secure physical timer) must be used.
+  # Leaving the BCM specific values in place makes TimerDxe program the wrong
+  # interrupt IDs, so no timer interrupt is ever delivered.
+  #
+  #gArmTokenSpaceGuid.PcdArmArchTimerSecIntrNum|0  #Interrupt Source/Vector 0
+  #gArmTokenSpaceGuid.PcdArmArchTimerIntrNum|1     #Interrupt Source/Vector 1
 
   #
   # Set the tick period for UEFI polling and timeouts expressed in 100ns units.
@@ -637,8 +651,12 @@
   #
   # MMC/SD
   #
-  Pi3BoardPkg/Drivers/MmcDxe/MmcDxe.inf
-  Pi3BoardPkg/Drivers/SdHostDxe/SdHostDxe.inf
+  # BCM2711 needs a driver for the Arasan eMMC2 controller at 0xFE340000. These
+  # two target the Pi 3 SDHOST/MMC1 blocks and end up in ASSERT(mRca != 0) on a
+  # Pi 4, which stops DXE before BDS, so they are excluded for now.
+  #
+  #Pi3BoardPkg/Drivers/MmcDxe/MmcDxe.inf
+  #Pi3BoardPkg/Drivers/SdHostDxe/SdHostDxe.inf
 
   #
   # ARM GIC+GIT Drivers

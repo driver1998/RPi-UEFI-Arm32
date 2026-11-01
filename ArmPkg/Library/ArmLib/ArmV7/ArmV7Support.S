@@ -115,7 +115,6 @@ ASM_PFX(ArmEnableMmu):
   isb
   bx      LR
 
-
 ASM_PFX(ArmDisableMmu):
   mrc     p15,0,R0,c1,c0,0
   bic     R0,R0,#1

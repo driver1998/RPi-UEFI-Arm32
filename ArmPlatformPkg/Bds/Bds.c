@@ -408,18 +408,33 @@ StartDefaultBootOnTimeout (
     // In case of Timeout we start the default boot selection
     if (Timeout == 0) {
       // Get the Boot Option Order from the environment variable (a default value should have been created)
-      GetGlobalEnvironmentVariable (L"BootOrder", NULL, &BootOrderSize, (VOID**)&BootOrder);
-
-      for (Index = 0; Index < BootOrderSize / sizeof (UINT16); Index++) {
-        UnicodeSPrint (BootVariableName, 9 * sizeof(CHAR16), L"Boot%04X", BootOrder[Index]);
-        Status = BdsStartBootOption (BootVariableName);
-        if (!EFI_ERROR(Status)){
-          // Boot option returned successfully, hence don't need to start next boot option
-          break;
+      //
+      // Note: the returned status must be checked and the outputs initialised.
+      // When no BootOrder variable exists (for example because no bootable
+      // device was found) GetGlobalEnvironmentVariable leaves BootOrder and
+      // BootOrderSize untouched, and walking the previous contents of those
+      // stack slots reads through a wild pointer. On a Pi 3 that pointer landed
+      // in mapped DRAM and the walk just failed silently; on a Pi 4, whose
+      // system memory starts at 0x00400000, it lands in the unmapped hole below
+      // it and raises a translation fault.
+      //
+      BootOrder     = NULL;
+      BootOrderSize = 0;
+      Status = GetGlobalEnvironmentVariable (L"BootOrder", NULL, &BootOrderSize, (VOID**)&BootOrder);
+      if (EFI_ERROR (Status) || (BootOrder == NULL)) {
+        DEBUG ((EFI_D_WARN, "StartDefaultBootOnTimeout: no BootOrder variable, skipping the default boot selection\n"));
+      } else {
+        for (Index = 0; Index < BootOrderSize / sizeof (UINT16); Index++) {
+          UnicodeSPrint (BootVariableName, 9 * sizeof(CHAR16), L"Boot%04X", BootOrder[Index]);
+          Status = BdsStartBootOption (BootVariableName);
+          if (!EFI_ERROR(Status)){
+            // Boot option returned successfully, hence don't need to start next boot option
+            break;
+          }
+          // In case of success, we should not return from this call.
         }
-        // In case of success, we should not return from this call.
+        FreePool (BootOrder);
       }
-      FreePool (BootOrder);
     }
   }
   return EFI_SUCCESS;
