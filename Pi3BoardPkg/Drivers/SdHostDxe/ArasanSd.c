@@ -65,6 +65,10 @@
 #define SDHCI_SOFTWARE_RESET        0x2F
 #define SDHCI_NORMAL_INT_STATUS     0x30
 #define SDHCI_ERROR_INT_STATUS      0x32
+#define SDHCI_NORMAL_INT_STATUS_ENABLE  0x34
+#define SDHCI_ERROR_INT_STATUS_ENABLE   0x36
+#define SDHCI_NORMAL_INT_SIGNAL_ENABLE  0x38
+#define SDHCI_ERROR_INT_SIGNAL_ENABLE   0x3A
 #define SDHCI_CAPABILITIES          0x40
 #define SDHCI_HOST_CONTROLLER_VER   0xFE
 
@@ -293,33 +297,40 @@ ArasanSdInitialize (
     MmioWrite8  (ARASAN_SD_BASE + SDHCI_TIMEOUT_CONTROL, 0x0E);
 
     //
-    // Force card detect to "card present".
+    // Enable the interrupt status bits, but not the interrupt signals.
     //
-    // The Pi 4 SD slot has no card detect line routed to the eMMC2 controller, so
-    // after reset PRESENT_STATE reports Card Inserted = 0. Hosts that gate command
-    // execution on card detect then accept the COMMAND write and never start the
-    // command, which shows up as neither COMMAND_COMPLETE nor a timeout error.
-    // Bit 7 selects the test level instead of the SDCD# pin, bit 6 is that level.
+    // The specification says the Status Enable registers only gate interrupt
+    // generation and that the status bits are set regardless, but this Arasan
+    // implementation appears to gate the status bits themselves. With both
+    // registers left at zero a command that is running (PRESENT_STATE reports
+    // Command Inhibit) never shows COMMAND_COMPLETE and never shows a timeout
+    // error either, so the driver reports a timeout forever. Linux programs
+    // 0x100b into the normal enable register and 0x03ff into the error one; all
+    // ones is fine here because this backend polls and leaves SIGNAL_ENABLE at
+    // zero. A dump of a working controller shows exactly this difference.
     //
-    MmioWrite8  (ARASAN_SD_BASE + SDHCI_HOST_CONTROL,
-                 SDHCI_HOST_CONTROL_CD_TEST_SEL | SDHCI_HOST_CONTROL_CD_TEST_LEVEL);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS_ENABLE, 0xFFFF);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS_ENABLE, 0xFFFF);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_SIGNAL_ENABLE, 0x0000);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_SIGNAL_ENABLE, 0x0000);
+
+    //
+    // Do not touch the card detect test bits: the working configuration on this
+    // board reports Card Inserted = 0 in PRESENT_STATE and still runs commands,
+    // so card detect does not gate anything here. 1-bit bus, default speed.
+    //
+    MmioWrite8  (ARASAN_SD_BASE + SDHCI_HOST_CONTROL, 0x00);
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS, 0xFFFF);
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
 
     //
-    // Power the bus at 3.3 V, then clock it at the identification frequency.
+    // Power the bus at 3.3 V and keep 3.3 V signalling for identification.
     //
+    // A dump of the working controller shows POWER_CONTROL = 0x0F, i.e. 3.3 V;
+    // the 1.8 V UHS signalling is expressed through HOST_CONTROL2, not here.
     //
-    // Power and signal at 1.8 V.
-    //
-    // Linux drives this card at 1.8 V signalling (regulator_summary shows
-    // vdd-sd-io at 1800 mV and the live mmc0 ios reports "signal voltage: 1.80 V"),
-    // so the slot's IO rail is at 1.8 V. Driving the controller for 3.3 V
-    // signalling against a 1.8 V rail is at best out of spec, and the controller
-    // would not advance a command at all in that configuration.
-    //
-    MmioWrite16 (ARASAN_SD_BASE + SDHCI_HOST_CONTROL2, SDHCI_HOST_CONTROL2_18V);
-    MmioWrite8 (ARASAN_SD_BASE + SDHCI_POWER_CONTROL, SDHCI_POWER_18V_ON);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_HOST_CONTROL2, 0x0000);
+    MmioWrite8 (ARASAN_SD_BASE + SDHCI_POWER_CONTROL, SDHCI_POWER_33V_ON);
     gBS->Stall (1000);
     ArasanSetSdClock (ARASAN_SD_IDENT_CLOCK_HZ);
 
