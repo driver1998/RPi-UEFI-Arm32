@@ -161,6 +161,11 @@ typedef struct _MAILBOX_GET_GPIO_VIRT_ADDR
 #define CLOCK_ID_SDRAM          0x000000008
 #define CLOCK_ID_PIXEL          0x000000009
 #define CLOCK_ID_PWM            0x00000000A
+//
+// BCM2711 has a second, separate clock for the eMMC2 (SDHCI) controller that the
+// Pi 4 SD card slot is wired to.
+//
+#define CLOCK_ID_EMMC2          0x00000000C
 
 #pragma pack(pop)
 

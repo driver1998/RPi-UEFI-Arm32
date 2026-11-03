@@ -26,6 +26,8 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Protocol/MmcHost.h>
 
+#include <BcmMailbox.h>
+
 #include "ArasanSd.h"
 
 //
@@ -194,6 +196,65 @@ ArasanSdInitialize (
         (UINT32)ARASAN_SD_BASE_CLOCK_HZ));
 
     //
+    // Request the eMMC2 module clock explicitly.
+    //
+    // A gated controller still answers register reads (the APB path is up, which
+    // is why the version and capabilities registers read correctly) but it never
+    // completes a command: the SDHCI command timeout is counted in SD clock
+    // cycles, so with no module clock neither COMMAND_COMPLETE nor a timeout
+    // error is ever raised. Ask the firmware for the clock the same way the PL011
+    // clock is requested at console init, and report what both the eMMC and the
+    // eMMC2 clock nodes currently are so a wrong clock id is visible.
+    //
+    {
+        MAILBOX_GET_CLOCK_RATE  MbGetClock;
+        MAILBOX_SET_CLOCK_RATE  MbSetClock;
+        EFI_STATUS              Status;
+        UINT32                  EmmcRate;
+        UINT32                  Emmc2Rate;
+
+        ZeroMem ((void *)&MbGetClock, sizeof (MbGetClock));
+        MbGetClock.Header.BufferSize = sizeof (MbGetClock);
+        MbGetClock.Header.TagID      = TAG_GET_CLOCK_RATE;
+        MbGetClock.Header.TagLength  = 8;
+        MbGetClock.ClockId           = CLOCK_ID_EMMC;
+        if (!EFI_ERROR (MailboxProperty (MAILBOX_CHANNEL_PROPERTY_ARM_VC,
+                                         (MAILBOX_HEADER *)&MbGetClock))) {
+            EmmcRate = MbGetClock.Rate;
+        } else {
+            EmmcRate = 0;
+        }
+
+        ZeroMem ((void *)&MbGetClock, sizeof (MbGetClock));
+        MbGetClock.Header.BufferSize = sizeof (MbGetClock);
+        MbGetClock.Header.TagID      = TAG_GET_CLOCK_RATE;
+        MbGetClock.Header.TagLength  = 8;
+        MbGetClock.ClockId           = CLOCK_ID_EMMC2;
+        if (!EFI_ERROR (MailboxProperty (MAILBOX_CHANNEL_PROPERTY_ARM_VC,
+                                         (MAILBOX_HEADER *)&MbGetClock))) {
+            Emmc2Rate = MbGetClock.Rate;
+        } else {
+            Emmc2Rate = 0;
+        }
+
+        DEBUG ((DEBUG_INIT, "ArasanSd: eMMC clock %d Hz, eMMC2 clock %d Hz\n", EmmcRate, Emmc2Rate));
+
+        ZeroMem ((void *)&MbSetClock, sizeof (MbSetClock));
+        MbSetClock.Header.BufferSize = sizeof (MbSetClock);
+        MbSetClock.Header.TagID      = TAG_SET_CLOCK_RATE;
+        MbSetClock.Header.TagLength  = 12;
+        MbSetClock.ClockId           = CLOCK_ID_EMMC2;
+        MbSetClock.Rate              = ARASAN_SD_BASE_CLOCK_HZ;
+        MbSetClock.SkipSettingTurbo  = 1;
+        Status = MailboxProperty (MAILBOX_CHANNEL_PROPERTY_ARM_VC,
+                                  (MAILBOX_HEADER *)&MbSetClock);
+        DEBUG ((
+            DEBUG_INIT,
+            "ArasanSd: set eMMC2 clock to %d Hz -> %r, now %d Hz\n",
+            (UINT32)ARASAN_SD_BASE_CLOCK_HZ, Status, MbSetClock.Rate));
+    }
+
+    //
     // Soft reset the whole controller and wait for it to clear.
     //
     MmioWrite8 (ARASAN_SD_BASE + SDHCI_SOFTWARE_RESET, SDHCI_SOFTWARE_RESET_ALL);
@@ -308,6 +369,13 @@ ArasanSendCommand (
         }
     }
 
+    //
+    // Write TRANSFER_MODE even for commands without data: the controller samples
+    // the whole transfer descriptor when COMMAND is written, and leaving the
+    // register at whatever the reset or a previous transfer left in it makes the
+    // command behaviour depend on history.
+    //
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE, 0x0000);
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_COMMAND, Command);
 
     for (Spin = 0; Spin < ARASAN_SD_CMD_POLL_COUNT; Spin++) {
@@ -330,10 +398,13 @@ ArasanSendCommand (
 
     DEBUG ((
         DEBUG_ERROR,
-        "ArasanSd: cmd %d (0x%04x, arg 0x%08x) timed out, present=0x%08x clock=0x%04x\n",
+        "ArasanSd: cmd %d (0x%04x, arg 0x%08x) timed out, present=0x%08x clock=0x%04x "
+        "normal=0x%04x error=0x%04x\n",
         Index, Command, Argument,
         MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE),
-        (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL)));
+        (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL),
+        (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS),
+        (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS)));
     return EFI_TIMEOUT;
 }
 
