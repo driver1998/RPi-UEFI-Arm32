@@ -154,9 +154,17 @@ ArasanSetSdClock (
             break;
         }
     }
+    if (Spin == ARASAN_SD_CMD_POLL_COUNT) {
+        DEBUG ((DEBUG_ERROR, "ArasanSd: internal clock never became stable\n"));
+    }
 
     Control |= SDHCI_CLOCK_CARD_EN;
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL, Control);
+
+    DEBUG ((
+        DEBUG_INIT,
+        "ArasanSd: target %d Hz, divider %d, clock control=0x%04x (stable after %d polls)\n",
+        TargetHz, Divider, MmioRead16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL), (UINT32)Spin));
 }
 
 /**
@@ -202,9 +210,13 @@ ArasanSdInitialize (
     //
     // Longest timeout, no interrupts (this backend polls), 1-bit bus.
     //
+    // Both interrupt status registers are 16-bit and ERROR_INT_STATUS lives at
+    // offset 0x32, so they must be accessed with MmioWrite16: a 32-bit access
+    // there is misaligned and traps with an alignment fault.
+    //
     MmioWrite8  (ARASAN_SD_BASE + SDHCI_TIMEOUT_CONTROL, 0x0E);
-    MmioWrite32 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS, 0xFFFF);
-    MmioWrite32 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS, 0xFFFF);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
     MmioWrite8  (ARASAN_SD_BASE + SDHCI_HOST_CONTROL, 0x00);
 
     //
@@ -316,7 +328,12 @@ ArasanSendCommand (
         }
     }
 
-    DEBUG ((DEBUG_ERROR, "ArasanSd: cmd %d timed out\n", Index));
+    DEBUG ((
+        DEBUG_ERROR,
+        "ArasanSd: cmd %d (0x%04x, arg 0x%08x) timed out, present=0x%08x clock=0x%04x\n",
+        Index, Command, Argument,
+        MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE),
+        (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL)));
     return EFI_TIMEOUT;
 }
 
