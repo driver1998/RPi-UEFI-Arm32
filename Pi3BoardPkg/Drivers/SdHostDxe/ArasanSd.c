@@ -104,6 +104,8 @@
 #define SDHCI_HOST_CONTROL_CD_TEST_SEL      (1U << 7)
 
 #define SDHCI_SOFTWARE_RESET_ALL    (1U << 0)
+#define SDHCI_SOFTWARE_RESET_CMD    (1U << 1)
+#define SDHCI_SOFTWARE_RESET_DAT    (1U << 2)
 
 //
 // SDHCI normal interrupt status (write one to clear)
@@ -127,6 +129,37 @@
 #define ARASAN_SD_DATA_POLL_COUNT   1000000UL
 
 static BOOLEAN  mArasanInitialized = FALSE;
+
+/**
+  Reset the command (and data) line after a failed command.
+
+  A command that times out leaves the controller with Command Inhibit asserted in
+  PRESENT_STATE. Every later COMMAND write is then ignored, which turns a single
+  expected failure (an SD card does not answer CMD1, for instance) into a run of
+  bogus timeouts for all following commands. The SDHCI way out is a command line
+  reset, which is what Linux does in sdhci_reset_for_error().
+**/
+STATIC
+VOID
+ArasanResetCmdLine (
+  VOID
+  )
+{
+    UINTN  Spin;
+
+    MmioWrite8 (ARASAN_SD_BASE + SDHCI_SOFTWARE_RESET,
+                SDHCI_SOFTWARE_RESET_CMD | SDHCI_SOFTWARE_RESET_DAT);
+
+    for (Spin = 0; Spin < ARASAN_SD_CMD_POLL_COUNT; Spin++) {
+        if ((MmioRead8 (ARASAN_SD_BASE + SDHCI_SOFTWARE_RESET) &
+             (SDHCI_SOFTWARE_RESET_CMD | SDHCI_SOFTWARE_RESET_DAT)) == 0) {
+            break;
+        }
+    }
+
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS, 0xFFFF);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
+}
 
 /**
   Program the SD clock divider and enable the card clock.
@@ -446,7 +479,7 @@ ArasanSendCommand (
                 DEBUG_ERROR,
                 "ArasanSd: cmd %d failed, error status=0x%04x, normal=0x%04x\n",
                 Index, ErrorStatus, NormalStatus));
-            MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
+            ArasanResetCmdLine ();
             return EFI_DEVICE_ERROR;
         }
     }
@@ -462,6 +495,7 @@ ArasanSendCommand (
         (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS),
         (UINT32)MmioRead8 (ARASAN_SD_BASE + SDHCI_HOST_CONTROL),
         (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_COMMAND)));
+    ArasanResetCmdLine ();
     return EFI_TIMEOUT;
 }
 
