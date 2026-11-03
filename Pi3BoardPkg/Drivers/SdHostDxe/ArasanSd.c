@@ -80,9 +80,16 @@
 #define SDHCI_CLOCK_MAX_DIVIDER     1023
 
 //
-// SDHCI_POWER_CONTROL: bus power on, 3.3 V (bits[3:1] = 111).
-//
+// SDHCI_POWER_CONTROL: bus power on plus the bus voltage (bits[3:1]).
+//   111 = 3.3 V, 110 = 3.0 V, 101 = 1.8 V
 #define SDHCI_POWER_33V_ON          0x0F
+#define SDHCI_POWER_18V_ON          0x0B
+
+//
+// SDHCI_HOST_CONTROL2 (16-bit, SDHCI 3.0). Bit 3 enables 1.8 V signalling.
+//
+#define SDHCI_HOST_CONTROL2         0x3E
+#define SDHCI_HOST_CONTROL2_18V     (1U << 3)
 
 //
 // SDHCI_HOST_CONTROL bits. Bit 7 selects the card detect test level instead of
@@ -302,7 +309,17 @@ ArasanSdInitialize (
     //
     // Power the bus at 3.3 V, then clock it at the identification frequency.
     //
-    MmioWrite8 (ARASAN_SD_BASE + SDHCI_POWER_CONTROL, SDHCI_POWER_33V_ON);
+    //
+    // Power and signal at 1.8 V.
+    //
+    // Linux drives this card at 1.8 V signalling (regulator_summary shows
+    // vdd-sd-io at 1800 mV and the live mmc0 ios reports "signal voltage: 1.80 V"),
+    // so the slot's IO rail is at 1.8 V. Driving the controller for 3.3 V
+    // signalling against a 1.8 V rail is at best out of spec, and the controller
+    // would not advance a command at all in that configuration.
+    //
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_HOST_CONTROL2, SDHCI_HOST_CONTROL2_18V);
+    MmioWrite8 (ARASAN_SD_BASE + SDHCI_POWER_CONTROL, SDHCI_POWER_18V_ON);
     gBS->Stall (1000);
     ArasanSetSdClock (ARASAN_SD_IDENT_CLOCK_HZ);
 
