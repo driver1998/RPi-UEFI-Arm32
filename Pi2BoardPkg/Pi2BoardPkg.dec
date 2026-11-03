@@ -63,6 +63,16 @@
   
   gPi2BoardTokenSpaceGuid.PcdRuntimeMuxingEnabled|FALSE|BOOLEAN|0x00000221
 
+  #
+  # Selects the SD controller behind EFI_MMC_HOST_PROTOCOL.
+  #
+  #   FALSE - BCM2836/BCM2837 SDHOST block at 0xFE202000 (Raspberry Pi 2/3; the
+  #           SD card slot is wired to it)
+  #   TRUE  - BCM2711 eMMC2 (Arasan SDHCI) at 0xFE340000 (Raspberry Pi 4, where
+  #           the SD card slot is wired to eMMC2 instead and SDHOST is unused)
+  #
+  gPi2BoardTokenSpaceGuid.PcdSdIsArasan|FALSE|BOOLEAN|0x00000222
+
 [PcdsDynamic.common]
   gPi2BoardTokenSpaceGuid.PcdGpuMemoryBase|0|UINT64|0x00000230
   gPi2BoardTokenSpaceGuid.PcdGpuMemorySize|0|UINT64|0x00000240
