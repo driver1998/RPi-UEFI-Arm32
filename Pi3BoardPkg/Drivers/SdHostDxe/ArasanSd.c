@@ -1,0 +1,390 @@
+/** @file
+  Arasan SDHCI backend for EFI_MMC_HOST_PROTOCOL on the BCM2711 eMMC2 controller.
+
+  Copyright (c), Microsoft Corporation. All rights reserved.
+
+  This program and the accompanying materials
+  are licensed and made available under the terms and conditions of the BSD License
+  which accompanies this distribution.  The full text of the license may be found at
+  http://opensource.org/licenses/bsd-license.php
+
+  THE PROGRAM IS DISTRIBUTED UNDER THE BSD LICENSE ON AN "AS IS" BASIS,
+  WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
+
+  Only the parts that are controller specific live here. IsCardPresent,
+  IsReadOnly and BuildDevicePath are hardware independent and are served by the
+  existing SdHostDxe implementations.
+
+**/
+
+#include <Uefi.h>
+
+#include <Library/IoLib.h>
+#include <Library/DebugLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/PcdLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Protocol/MmcHost.h>
+
+#include "ArasanSd.h"
+
+//
+// BCM2711 eMMC2 (Arasan SDHCI). The Pi 3 build uses the BCM2836/2837 SDHOST
+// block at 0xFE202000 instead; on a Pi 4 the SD slot is wired to eMMC2 and
+// SDHOST is not connected to the card at all.
+//
+#define ARASAN_SD_BASE              0xFE340000UL
+
+//
+// The SDHCI capabilities register reports a base clock that is not reliable on
+// BCM2711 (Linux carries SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN for this controller),
+// so the divider is computed from this constant instead. Keep it in one place so
+// it can be corrected from a measurement.
+//
+#define ARASAN_SD_BASE_CLOCK_HZ     100000000UL
+
+#define ARASAN_SD_IDENT_CLOCK_HZ    400000UL
+#define ARASAN_SD_TRANSFER_CLOCK_HZ 25000000UL
+
+//
+// SDHCI register offsets
+//
+#define SDHCI_BLOCK_SIZE_COUNT      0x04
+#define SDHCI_ARGUMENT              0x08
+#define SDHCI_TRANSFER_MODE         0x0C
+#define SDHCI_COMMAND               0x0E
+#define SDHCI_RESPONSE_0            0x10
+#define SDHCI_BUFFER_DATA_PORT      0x20
+#define SDHCI_PRESENT_STATE         0x24
+#define SDHCI_HOST_CONTROL          0x28
+#define SDHCI_POWER_CONTROL         0x29
+#define SDHCI_CLOCK_CONTROL         0x2C
+#define SDHCI_TIMEOUT_CONTROL       0x2E
+#define SDHCI_SOFTWARE_RESET        0x2F
+#define SDHCI_NORMAL_INT_STATUS     0x30
+#define SDHCI_ERROR_INT_STATUS      0x32
+#define SDHCI_CAPABILITIES          0x40
+#define SDHCI_HOST_CONTROLLER_VER   0xFE
+
+//
+// SDHCI_CLOCK_CONTROL bits. The SDCLK Frequency Select field is 10 bits split as
+// bits[7:6] (low two) and bits[15:8] (high eight) on SDHCI 3.0 controllers, so
+// the programmed value V is (V >> 2) << 8 | (V & 3) << 6.
+//
+#define SDHCI_CLOCK_INT_EN          (1U << 0)
+#define SDHCI_CLOCK_INT_STABLE      (1U << 1)
+#define SDHCI_CLOCK_CARD_EN         (1U << 2)
+#define SDHCI_CLOCK_SEL_MASK        0xFFC0
+#define SDHCI_CLOCK_MAX_DIVIDER     1023
+
+//
+// SDHCI_POWER_CONTROL: bus power on, 3.3 V (bits[3:1] = 111).
+//
+#define SDHCI_POWER_33V_ON          0x0F
+
+#define SDHCI_SOFTWARE_RESET_ALL    (1U << 0)
+
+//
+// SDHCI normal interrupt status (write one to clear)
+//
+#define SDHCI_INT_CMD_COMPLETE      (1U << 0)
+#define SDHCI_INT_XFER_COMPLETE     (1U << 1)
+#define SDHCI_INT_BUF_WRITE_READY   (1U << 4)
+#define SDHCI_INT_BUF_READ_READY    (1U << 5)
+
+//
+// SDHCI_COMMAND response type select
+//
+#define SDHCI_CMD_RESP_NONE         0x00
+#define SDHCI_CMD_RESP_LONG         0x01
+#define SDHCI_CMD_RESP_SHORT        0x02
+#define SDHCI_CMD_CRC_CHECK         (1U << 3)
+#define SDHCI_CMD_INDEX_CHECK       (1U << 4)
+#define SDHCI_CMD_DATA_PRESENT      (1U << 5)
+
+#define ARASAN_SD_CMD_POLL_COUNT    1000000UL
+#define ARASAN_SD_DATA_POLL_COUNT   1000000UL
+
+static BOOLEAN  mArasanInitialized = FALSE;
+
+/**
+  Program the SD clock divider and enable the card clock.
+
+  @param  TargetHz  Requested SD clock in Hz.
+**/
+STATIC
+VOID
+ArasanSetSdClock (
+  IN UINT32  TargetHz
+  )
+{
+    UINT32  Divider;
+    UINT16  Control;
+    UINTN   Spin;
+
+    if (TargetHz == 0) {
+        return;
+    }
+
+    Divider = ARASAN_SD_BASE_CLOCK_HZ / (2 * TargetHz);
+    if (Divider == 0) {
+        Divider = 1;
+    }
+    if (Divider > SDHCI_CLOCK_MAX_DIVIDER) {
+        Divider = SDHCI_CLOCK_MAX_DIVIDER;
+    }
+
+    //
+    // The clock must be off while the divider changes.
+    //
+    Control  = MmioRead16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL);
+    Control &= (UINT16)~(SDHCI_CLOCK_CARD_EN | SDHCI_CLOCK_SEL_MASK);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL, Control);
+
+    Control |= (UINT16)(((Divider >> 2) << 8) & 0xFF00);
+    Control |= (UINT16)((Divider & 0x3) << 6);
+    Control |= SDHCI_CLOCK_INT_EN;
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL, Control);
+
+    //
+    // Wait for the internal clock to become stable before enabling it on the bus.
+    //
+    for (Spin = 0; Spin < ARASAN_SD_CMD_POLL_COUNT; Spin++) {
+        if ((MmioRead16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL) & SDHCI_CLOCK_INT_STABLE) != 0) {
+            break;
+        }
+    }
+
+    Control |= SDHCI_CLOCK_CARD_EN;
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL, Control);
+}
+
+/**
+  Bring the controller to a known state: reset, identification clock, 3.3 V power.
+
+  Called once from the driver entry point when PcdSdIsArasan is set, and again on
+  the MmcHwInitializationState notification.
+**/
+EFI_STATUS
+ArasanSdInitialize (
+  VOID
+  )
+{
+    UINTN   Spin;
+    UINT16  Version;
+    UINT32  Capabilities;
+
+    Version      = MmioRead16 (ARASAN_SD_BASE + SDHCI_HOST_CONTROLLER_VER);
+    Capabilities = MmioRead32 (ARASAN_SD_BASE + SDHCI_CAPABILITIES);
+    DEBUG ((
+        DEBUG_INIT,
+        "ArasanSd: base=0x%08x SDHCI version %d.%02d, capabilities=0x%08x\n",
+        (UINT32)ARASAN_SD_BASE, Version >> 8, Version & 0xFF, Capabilities));
+    DEBUG ((
+        DEBUG_INIT,
+        "ArasanSd: using a fixed %d Hz base clock for the divider\n",
+        (UINT32)ARASAN_SD_BASE_CLOCK_HZ));
+
+    //
+    // Soft reset the whole controller and wait for it to clear.
+    //
+    MmioWrite8 (ARASAN_SD_BASE + SDHCI_SOFTWARE_RESET, SDHCI_SOFTWARE_RESET_ALL);
+    for (Spin = 0; Spin < ARASAN_SD_CMD_POLL_COUNT; Spin++) {
+        if ((MmioRead8 (ARASAN_SD_BASE + SDHCI_SOFTWARE_RESET) & SDHCI_SOFTWARE_RESET_ALL) == 0) {
+            break;
+        }
+    }
+    if (Spin == ARASAN_SD_CMD_POLL_COUNT) {
+        DEBUG ((DEBUG_ERROR, "ArasanSd: controller reset did not complete\n"));
+        return EFI_DEVICE_ERROR;
+    }
+
+    //
+    // Longest timeout, no interrupts (this backend polls), 1-bit bus.
+    //
+    MmioWrite8  (ARASAN_SD_BASE + SDHCI_TIMEOUT_CONTROL, 0x0E);
+    MmioWrite32 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS, 0xFFFF);
+    MmioWrite32 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
+    MmioWrite8  (ARASAN_SD_BASE + SDHCI_HOST_CONTROL, 0x00);
+
+    //
+    // Power the bus at 3.3 V, then clock it at the identification frequency.
+    //
+    MmioWrite8 (ARASAN_SD_BASE + SDHCI_POWER_CONTROL, SDHCI_POWER_33V_ON);
+    gBS->Stall (1000);
+    ArasanSetSdClock (ARASAN_SD_IDENT_CLOCK_HZ);
+
+    mArasanInitialized = TRUE;
+    return EFI_SUCCESS;
+}
+
+BOOLEAN
+ArasanIsInitialized (
+  VOID
+  )
+{
+    return mArasanInitialized;
+}
+
+EFI_STATUS
+ArasanNotifyState (
+    IN EFI_MMC_HOST_PROTOCOL    *This,
+    IN MMC_STATE                State
+    )
+{
+    switch (State) {
+    case MmcHwInitializationState:
+        return ArasanSdInitialize ();
+
+    case MmcTransferState:
+        //
+        // Card is identified and addressed: move to the transfer clock. Stay at
+        // 3.3 V signalling, so the rate is capped well below high speed.
+        //
+        ArasanSetSdClock (ARASAN_SD_TRANSFER_CLOCK_HZ);
+        DEBUG ((DEBUG_INIT, "ArasanSd: transfer clock %d Hz\n", (UINT32)ARASAN_SD_TRANSFER_CLOCK_HZ));
+        return EFI_SUCCESS;
+
+    default:
+        return EFI_SUCCESS;
+    }
+}
+
+EFI_STATUS
+ArasanSendCommand (
+    IN EFI_MMC_HOST_PROTOCOL    *This,
+    IN MMC_CMD                  MmcCmd,
+    IN UINT32                   Argument
+    )
+{
+    UINT16  Command;
+    UINT16  NormalStatus;
+    UINT16  ErrorStatus;
+    UINT32  Index;
+    UINTN   Spin;
+
+    Index = MMC_GET_INDX (MmcCmd);
+
+    //
+    // CMD5 (SDIO send op cond) is only valid for SDIO cards and MmcDxe expects it
+    // to fail on an SD card, exactly as the SDHOST backend does.
+    //
+    if (Index == 5) {
+        return EFI_UNSUPPORTED;
+    }
+
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS, 0xFFFF);
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
+    MmioWrite32 (ARASAN_SD_BASE + SDHCI_ARGUMENT, Argument);
+
+    Command = (UINT16)((Index << 8) & 0x3F00);
+    if ((MmcCmd & MMC_CMD_WAIT_RESPONSE) != 0) {
+        if ((MmcCmd & MMC_CMD_LONG_RESPONSE) != 0) {
+            Command |= SDHCI_CMD_RESP_LONG;
+        } else {
+            Command |= SDHCI_CMD_RESP_SHORT;
+        }
+        if ((MmcCmd & MMC_CMD_NO_CRC_RESPONSE) == 0) {
+            Command |= SDHCI_CMD_CRC_CHECK;
+            //
+            // The index check is not defined for the 136-bit responses (CMD2,
+            // CMD9), which is why they carry MMC_CMD_LONG_RESPONSE.
+            //
+            if ((MmcCmd & MMC_CMD_LONG_RESPONSE) == 0) {
+                Command |= SDHCI_CMD_INDEX_CHECK;
+            }
+        }
+    }
+
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_COMMAND, Command);
+
+    for (Spin = 0; Spin < ARASAN_SD_CMD_POLL_COUNT; Spin++) {
+        NormalStatus = MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS);
+        if ((NormalStatus & SDHCI_INT_CMD_COMPLETE) != 0) {
+            MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS, SDHCI_INT_CMD_COMPLETE);
+            return EFI_SUCCESS;
+        }
+
+        ErrorStatus = MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS);
+        if (ErrorStatus != 0) {
+            DEBUG ((
+                DEBUG_ERROR,
+                "ArasanSd: cmd %d failed, error status=0x%04x, normal=0x%04x\n",
+                Index, ErrorStatus, NormalStatus));
+            MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
+            return EFI_DEVICE_ERROR;
+        }
+    }
+
+    DEBUG ((DEBUG_ERROR, "ArasanSd: cmd %d timed out\n", Index));
+    return EFI_TIMEOUT;
+}
+
+EFI_STATUS
+ArasanReceiveResponse (
+    IN EFI_MMC_HOST_PROTOCOL    *This,
+    IN MMC_RESPONSE_TYPE        Type,
+    OUT UINT32                  *Buffer
+    )
+{
+    if (Buffer == NULL) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    Buffer[0] = MmioRead32 (ARASAN_SD_BASE + SDHCI_RESPONSE_0);
+    Buffer[1] = MmioRead32 (ARASAN_SD_BASE + SDHCI_RESPONSE_0 + 4);
+    Buffer[2] = MmioRead32 (ARASAN_SD_BASE + SDHCI_RESPONSE_0 + 8);
+    Buffer[3] = MmioRead32 (ARASAN_SD_BASE + SDHCI_RESPONSE_0 + 12);
+
+    if (Type == MMC_RESPONSE_TYPE_R2) {
+        //
+        // Strip the leading start/transmission byte and the CRC the same way the
+        // SDHOST backend does, so MmcDxe sees an identically shaped buffer.
+        //
+        UINT8   *Bytes = (UINT8 *)Buffer;
+        UINT32  Idx;
+
+        for (Idx = 0; Idx < (sizeof (UINT32) * 4) - 1; Idx++) {
+            Bytes[Idx] = Bytes[Idx + 1];
+        }
+        Bytes[(sizeof (UINT32) * 4) - 1] = 0;
+    }
+
+    DEBUG ((
+        DEBUG_MMCHOST_SD,
+        "ArasanSd: response type %d: %08x %08x %08x %08x\n",
+        Type, Buffer[0], Buffer[1], Buffer[2], Buffer[3]));
+
+    return EFI_SUCCESS;
+}
+
+EFI_STATUS
+ArasanReadBlockData (
+    IN EFI_MMC_HOST_PROTOCOL    *This,
+    IN EFI_LBA                  Lba,
+    IN UINTN                    Length,
+    OUT UINT32                  *Buffer
+    )
+{
+    //
+    // Data transfers are the second milestone; the command layer is validated
+    // first so that a card that never answers cannot be confused with a broken
+    // data path.
+    //
+    DEBUG ((DEBUG_ERROR, "ArasanSd: ReadBlockData not implemented yet (LBA 0x%x, %d bytes)\n",
+            (UINT32)Lba, (UINT32)Length));
+    return EFI_UNSUPPORTED;
+}
+
+EFI_STATUS
+ArasanWriteBlockData (
+    IN EFI_MMC_HOST_PROTOCOL    *This,
+    IN EFI_LBA                  Lba,
+    IN UINTN                    Length,
+    IN UINT32                   *Buffer
+    )
+{
+    DEBUG ((DEBUG_ERROR, "ArasanSd: WriteBlockData not implemented yet (LBA 0x%x, %d bytes)\n",
+            (UINT32)Lba, (UINT32)Length));
+    return EFI_UNSUPPORTED;
+}

@@ -555,6 +555,12 @@
   # GPIO by default, and it is the OS's responsibility to mux them away.
   gPi2BoardTokenSpaceGuid.PcdRuntimeMuxingEnabled|TRUE
 
+  #
+  # SD controller selection for EFI_MMC_HOST_PROTOCOL.
+  # FALSE = Pi 2/3 SDHOST at 0xFE202000, TRUE = Pi 4 eMMC2 (Arasan) at 0xFE340000.
+  #
+  gPi2BoardTokenSpaceGuid.PcdSdIsArasan|TRUE
+
 [PcdsDynamicDefault]
   # This Pcd is declared as both Fixed and Dynamic in the Arm package dec file
   # The default is Fixed unless we redeclare it in the dsc as Dynamic
@@ -651,12 +657,12 @@
   #
   # MMC/SD
   #
-  # BCM2711 needs a driver for the Arasan eMMC2 controller at 0xFE340000. These
-  # two target the Pi 3 SDHOST/MMC1 blocks and end up in ASSERT(mRca != 0) on a
-  # Pi 4, which stops DXE before BDS, so they are excluded for now.
+  # SdHostDxe serves EFI_MMC_HOST_PROTOCOL for either controller and PcdSdIsArasan
+  # selects which one: on BCM2711 the SD slot is wired to the Arasan eMMC2 block
+  # at 0xFE340000, not to the SDHOST block the Pi 3 code drives.
   #
-  #Pi3BoardPkg/Drivers/MmcDxe/MmcDxe.inf
-  #Pi3BoardPkg/Drivers/SdHostDxe/SdHostDxe.inf
+  Pi3BoardPkg/Drivers/MmcDxe/MmcDxe.inf
+  Pi3BoardPkg/Drivers/SdHostDxe/SdHostDxe.inf
 
   #
   # ARM GIC+GIT Drivers

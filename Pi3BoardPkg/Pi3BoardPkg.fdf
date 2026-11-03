@@ -144,15 +144,12 @@ READ_LOCK_STATUS   = TRUE
   #
   # MMC/SD
   #
-  # BCM2711 (Pi 4) carries the SD card on the Arasan eMMC2 controller at
-  # 0xFE340000, not on the SDHOST controller at 0xFE202000 that SdHostDxe drives
-  # (and MmcDxe still addresses the Pi 3 MMC1 block at 0xFE300000). On a Pi 4
-  # SdHostDxe ends up in ASSERT(mRca != 0) because no card can be identified,
-  # which stops DXE before BDS. Both drivers are therefore left out of the image
-  # until a BCM2711 eMMC2 driver exists; BDS then starts without a block device.
+  # SdHostDxe serves EFI_MMC_HOST_PROTOCOL for either controller and
+  # PcdSdIsArasan selects which one: on BCM2711 the SD slot is wired to the
+  # Arasan eMMC2 block at 0xFE340000, not to SDHOST.
   #
-  #INF Pi3BoardPkg/Drivers/MmcDxe/MmcDxe.inf
-  #INF Pi3BoardPkg/Drivers/SdHostDxe/SdHostDxe.inf
+  INF Pi3BoardPkg/Drivers/MmcDxe/MmcDxe.inf
+  INF Pi3BoardPkg/Drivers/SdHostDxe/SdHostDxe.inf
 
   #
   # ACPI

@@ -34,6 +34,18 @@
 #include <Bcm2836SdHost.h>
 #include <BcmMailbox.h>
 
+#include "ArasanSd.h"
+
+//
+// Two SD controller backends share one EFI_MMC_HOST_PROTOCOL instance.
+//
+//   PcdSdIsArasan == FALSE : BCM2836/BCM2837 SDHOST at 0xFE202000 (Pi 2/3)
+//   PcdSdIsArasan == TRUE  : BCM2711 eMMC2 Arasan SDHCI at 0xFE340000 (Pi 4)
+//
+// IsCardPresent, IsReadOnly and BuildDevicePath are hardware independent and are
+// always served below. Only the controller accessors dispatch.
+//
+
 #define SDHOST_BLOCK_BYTE_LENGTH            512
 
 // Driver Timing Parameters
@@ -256,6 +268,10 @@ SdSendCommand(
     IN UINT32                   Argument
     )
 {
+    if (PcdGetBool (PcdSdIsArasan)) {
+        return ArasanSendCommand (This, MmcCmd, Argument);
+    }
+
     // Fail fast, CMD5 (CMD_IO_SEND_OP_COND) is only valid for SDIO cards and thus expected to always fail
     if (MmcCmd == MMC_CMD5)
     {
@@ -411,6 +427,10 @@ SdReceiveResponse(
     if (Buffer == NULL) {
         DEBUG((DEBUG_ERROR, "SdHost: SdReceiveResponse(): Input Buffer is NULL\n"));
         return EFI_INVALID_PARAMETER;
+    }
+
+    if (PcdGetBool (PcdSdIsArasan)) {
+        return ArasanReceiveResponse (This, Type, Buffer);
     }
 
     if ((Type == MMC_RESPONSE_TYPE_R1) ||
@@ -658,6 +678,10 @@ SdReadBlockData(
     ASSERT(Buffer != NULL);
     ASSERT(Length % SDHOST_BLOCK_BYTE_LENGTH == 0);
 
+    if (PcdGetBool (PcdSdIsArasan)) {
+        return ArasanReadBlockData (This, Lba, Length, Buffer);
+    }
+
     EFI_STATUS Status = EFI_SUCCESS;
 
     LedSetOk(TRUE);
@@ -709,6 +733,10 @@ SdWriteBlockData(
     ASSERT(Buffer != NULL);
     ASSERT(Length % SDHOST_BLOCK_BYTE_LENGTH == 0);
 
+    if (PcdGetBool (PcdSdIsArasan)) {
+        return ArasanWriteBlockData (This, Lba, Length, Buffer);
+    }
+
     EFI_STATUS Status = EFI_SUCCESS;
 
     LedSetOk(TRUE);
@@ -750,6 +778,10 @@ SdNotifyState(
     IN MMC_STATE                State
     )
 {
+    if (PcdGetBool (PcdSdIsArasan)) {
+        return ArasanNotifyState (This, State);
+    }
+
     DEBUG((DEBUG_MMCHOST_SD, "SdHost: SdNotifyState(State: %d) ", State));
 
     switch (State) {
@@ -909,6 +941,15 @@ SdHostInitialize(
     DEBUG((DEBUG_MMCHOST_SD, " - CMD_MAX_POLL_COUNT=%d\n", CMD_MAX_POLL_COUNT));
     DEBUG((DEBUG_MMCHOST_SD, " - CMD_MAX_RETRY_COUNT=%d\n", CMD_MAX_RETRY_COUNT));
     DEBUG((DEBUG_MMCHOST_SD, " - CMD_STALL_AFTER_RETRY_US=%dus\n", CMD_STALL_AFTER_RETRY_US));
+
+    if (PcdGetBool (PcdSdIsArasan)) {
+        DEBUG((DEBUG_INIT, "SdHost: using the BCM2711 eMMC2 (Arasan SDHCI) backend\n"));
+        Status = ArasanSdInitialize ();
+        if (EFI_ERROR (Status)) {
+            DEBUG((DEBUG_ERROR, "SdHost: ArasanSdInitialize() failed: 0x%x\n", Status));
+            return Status;
+        }
+    }
 
     Status = gBS->InstallMultipleProtocolInterfaces(
         &Handle,

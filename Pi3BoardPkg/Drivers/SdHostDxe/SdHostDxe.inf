@@ -21,11 +21,15 @@
 
 [Sources.common]
   SdHostDxe.c
+  ArasanSd.c
 
 [Packages]
   MdePkg/MdePkg.dec
   EmbeddedPkg/EmbeddedPkg.dec
   Pi2BoardPkg/Pi2BoardPkg.dec
+
+[FixedPcd]
+  gPi2BoardTokenSpaceGuid.PcdSdIsArasan
 
 [LibraryClasses]
   PcdLib
