@@ -84,6 +84,14 @@
 //
 #define SDHCI_POWER_33V_ON          0x0F
 
+//
+// SDHCI_HOST_CONTROL bits. Bit 7 selects the card detect test level instead of
+// the SDCD# pin and bit 6 is that level; the Pi 4 slot has no card detect pin
+// wired to eMMC2, so both are needed before the controller will start a command.
+//
+#define SDHCI_HOST_CONTROL_CD_TEST_LEVEL    (1U << 6)
+#define SDHCI_HOST_CONTROL_CD_TEST_SEL      (1U << 7)
+
 #define SDHCI_SOFTWARE_RESET_ALL    (1U << 0)
 
 //
@@ -276,9 +284,20 @@ ArasanSdInitialize (
     // there is misaligned and traps with an alignment fault.
     //
     MmioWrite8  (ARASAN_SD_BASE + SDHCI_TIMEOUT_CONTROL, 0x0E);
+
+    //
+    // Force card detect to "card present".
+    //
+    // The Pi 4 SD slot has no card detect line routed to the eMMC2 controller, so
+    // after reset PRESENT_STATE reports Card Inserted = 0. Hosts that gate command
+    // execution on card detect then accept the COMMAND write and never start the
+    // command, which shows up as neither COMMAND_COMPLETE nor a timeout error.
+    // Bit 7 selects the test level instead of the SDCD# pin, bit 6 is that level.
+    //
+    MmioWrite8  (ARASAN_SD_BASE + SDHCI_HOST_CONTROL,
+                 SDHCI_HOST_CONTROL_CD_TEST_SEL | SDHCI_HOST_CONTROL_CD_TEST_LEVEL);
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS, 0xFFFF);
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS, 0xFFFF);
-    MmioWrite8  (ARASAN_SD_BASE + SDHCI_HOST_CONTROL, 0x00);
 
     //
     // Power the bus at 3.3 V, then clock it at the identification frequency.
@@ -286,6 +305,14 @@ ArasanSdInitialize (
     MmioWrite8 (ARASAN_SD_BASE + SDHCI_POWER_CONTROL, SDHCI_POWER_33V_ON);
     gBS->Stall (1000);
     ArasanSetSdClock (ARASAN_SD_IDENT_CLOCK_HZ);
+
+    DEBUG ((
+        DEBUG_INIT,
+        "ArasanSd: ready, present=0x%08x hostctl=0x%02x power=0x%02x reset=0x%02x\n",
+        MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE),
+        (UINT32)MmioRead8 (ARASAN_SD_BASE + SDHCI_HOST_CONTROL),
+        (UINT32)MmioRead8 (ARASAN_SD_BASE + SDHCI_POWER_CONTROL),
+        (UINT32)MmioRead8 (ARASAN_SD_BASE + SDHCI_SOFTWARE_RESET)));
 
     mArasanInitialized = TRUE;
     return EFI_SUCCESS;
@@ -399,12 +426,14 @@ ArasanSendCommand (
     DEBUG ((
         DEBUG_ERROR,
         "ArasanSd: cmd %d (0x%04x, arg 0x%08x) timed out, present=0x%08x clock=0x%04x "
-        "normal=0x%04x error=0x%04x\n",
+        "normal=0x%04x error=0x%04x hostctl=0x%02x cmdreg=0x%04x\n",
         Index, Command, Argument,
         MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE),
         (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_CLOCK_CONTROL),
         (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS),
-        (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS)));
+        (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS),
+        (UINT32)MmioRead8 (ARASAN_SD_BASE + SDHCI_HOST_CONTROL),
+        (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_COMMAND)));
     return EFI_TIMEOUT;
 }
 
