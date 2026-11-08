@@ -104,6 +104,7 @@
 //
 #define SDHCI_HOST_CONTROL_CD_TEST_LEVEL    (1U << 6)
 #define SDHCI_HOST_CONTROL_CD_TEST_SEL      (1U << 7)
+#define SDHCI_HOST_CONTROL_HIGH_SPEED       (1U << 2)
 
 #define SDHCI_SOFTWARE_RESET_ALL    (1U << 0)
 #define SDHCI_SOFTWARE_RESET_CMD    (1U << 1)
@@ -474,8 +475,21 @@ ArasanNotifyState (
         //
         if (!mArasanAtTransferClock) {
             ArasanSetSdClock (ARASAN_SD_TRANSFER_CLOCK_HZ);
+
+            //
+            // Match the working Linux host configuration as far as a 1 bit bus
+            // allows: the dump of the live controller has HOST_CONTROL = 0x16,
+            // which sets High Speed (bit 2) on top of the bus width bits. This
+            // driver stays on a 1 bit bus, so only the High Speed bit is added.
+            //
+            MmioWrite8 (ARASAN_SD_BASE + SDHCI_HOST_CONTROL, SDHCI_HOST_CONTROL_HIGH_SPEED);
+
             mArasanAtTransferClock = TRUE;
-            DEBUG ((DEBUG_INIT, "ArasanSd: transfer clock %d Hz\n", (UINT32)ARASAN_SD_TRANSFER_CLOCK_HZ));
+            DEBUG ((
+                DEBUG_INIT,
+                "ArasanSd: transfer clock %d Hz, host control=0x%02x\n",
+                (UINT32)ARASAN_SD_TRANSFER_CLOCK_HZ,
+                (UINT32)MmioRead8 (ARASAN_SD_BASE + SDHCI_HOST_CONTROL)));
         }
         return EFI_SUCCESS;
 
