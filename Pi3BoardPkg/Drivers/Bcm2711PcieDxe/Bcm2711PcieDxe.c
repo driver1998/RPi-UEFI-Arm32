@@ -70,6 +70,20 @@
 //   RGR1_SW_INIT_1_PERST_MASK        = 0x1            (PERST#)
 //
 #define PCIE_RGR1_SW_INIT_1                 0x9210
+
+//
+// CPU to PCIe outbound window. The device tree uses CPU 0x600000000, which a
+// 32 bit ARM cannot address, so the port picks its own 4 MB range instead.
+//
+#define PCIE_MEM_WIN0_LO                    0x400C
+#define PCIE_MEM_WIN0_HI                    0x4010
+#define PCIE_MEM_WIN0_BASE_LIMIT            0x4070
+#define PCIE_MEM_WIN0_BASE_HI               0x4080
+#define PCIE_MEM_WIN0_LIMIT_HI              0x4084
+
+#define PCIE_WINDOW_CPU_BASE                0xC0000000UL
+#define PCIE_WINDOW_CPU_END                 0xC03FFFFFUL
+#define PCIE_WINDOW_DEVICE_ADDR             0xC0000000UL
 #define  RGR1_INIT_MASK                     0x2
 #define  RGR1_INIT_SHIFT                    1
 #define  RGR1_PERST_MASK                    0x1
@@ -382,6 +396,7 @@ Bcm2711PcieInitialize (
 
   if ((Status & PCIE_STATUS_DL_ACTIVE) != 0) {
     UINT32  Command;
+    UINT32  Window;
     UINT32  Index;
 
     DEBUG ((DEBUG_INIT, "Bcm2711Pcie: data link is active\n"));
@@ -421,6 +436,56 @@ Bcm2711PcieInitialize (
     // PCIE_MISC_RC_CONFIG_RETRY_TIMEOUT expires, which costs seconds per access:
     // scanning all 32 device numbers stalled the boot for about a minute after
     // the VL805 line was printed.
+    //
+    // The firmware never assigned an address: BAR0 reads back 0x00000004, a 64
+    // bit memory BAR with a zero address, and the command register is 0. That is
+    // convenient, there is nothing to relocate, so the port simply assigns an
+    // address of its own inside a 32 bit outbound window.
+    //
+    // Window: CPU 0xC0000000..0xC03FFFFF  ->  PCI 0xF8000000
+    //   PCI side base      : PCIE_MEM_WIN0_LO / HI
+    //   CPU side base      : WIN0_BASE_LIMIT bits[15:4], in MB
+    //   CPU side limit     : WIN0_BASE_LIMIT bits[31:20], in MB
+    //   upper bits         : WIN0_BASE_HI / WIN0_LIMIT_HI
+    //
+    MmioWrite32 (PCIE_RC_BASE + PCIE_MEM_WIN0_LO, 0xF8000000);
+    MmioWrite32 (PCIE_RC_BASE + PCIE_MEM_WIN0_HI, 0x00000000);
+
+    Window = MmioRead32 (PCIE_RC_BASE + PCIE_MEM_WIN0_BASE_LIMIT);
+    Window &= ~0xFFF00000;
+    Window |= ((PCIE_WINDOW_CPU_END / 0x100000) & 0xFFF) << 20;
+    Window &= ~0x0000FFF0;
+    Window |= ((PCIE_WINDOW_CPU_BASE / 0x100000) & 0xFFF) << 4;
+    MmioWrite32 (PCIE_RC_BASE + PCIE_MEM_WIN0_BASE_LIMIT, Window);
+    MmioWrite32 (PCIE_RC_BASE + PCIE_MEM_WIN0_BASE_HI, 0x00000000);
+    MmioWrite32 (PCIE_RC_BASE + PCIE_MEM_WIN0_LIMIT_HI, 0x00000000);
+
+    //
+    // Point the VL805's 64 bit memory BAR at the start of that window and turn on
+    // memory space and bus mastering.
+    //
+    PcieWriteConfig32 (1, 0, 0, 0x10, PCIE_WINDOW_DEVICE_ADDR);
+    PcieWriteConfig32 (1, 0, 0, 0x14, 0x00000000);
+    PcieWriteConfig32 (1, 0, 0, 0x04, 0x0006);
+
+    DEBUG ((
+      DEBUG_INIT,
+      "Bcm2711Pcie: window cpu 0x%08x..0x%08x -> pci 0xF8000000, bar0=0x%08x, command=0x%04x\n",
+      (UINT32)PCIE_WINDOW_CPU_BASE, (UINT32)PCIE_WINDOW_CPU_END,
+      PcieReadConfig32 (1, 0, 0, 0x10),
+      PcieReadConfig32 (1, 0, 0, 0x04) & 0xFFFF));
+
+    //
+    // Prove it: the first two registers of an xHCI controller are CAPLENGTH and
+    // HCIVERSION, so a plausible value here means config space, the outbound
+    // window and the BAR assignment all work together.
+    //
+    DEBUG ((
+      DEBUG_INIT,
+      "Bcm2711Pcie: xHCI CAPLENGTH/HCIVERSION at 0x%08x = 0x%08x\n",
+      (UINT32)PCIE_WINDOW_DEVICE_ADDR,
+      MmioRead32 (PCIE_WINDOW_DEVICE_ADDR)));
+
     //
     PciePrintDevice (1, 0, 0);
 

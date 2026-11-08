@@ -24,7 +24,7 @@
 #include <Pi2Board.h>
 #include <BcmMailbox.h>
 
-#define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS  6
+#define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS  10
 
 volatile MAILBOX_GET_MEMORY MbGetMemory __attribute__((aligned(16)));
 
@@ -79,6 +79,19 @@ ArmPlatformGetVirtualMemoryMap (
   VirtualMemoryTable[Index].Attributes     = CacheAttributes;
 
   //
+  //
+  // PCIe outbound window, CPU side.
+  //
+  // The root complex translates a CPU address range onto PCI memory. The device
+  // tree picks 0x600000000, which a 32 bit ARM cannot reach, so this port uses
+  // 0xC0000000 instead and assigns the VL805's base address registers inside it.
+  // Nothing else claims this range.
+  //
+  VirtualMemoryTable[++Index].PhysicalBase = 0xC0000000;
+  VirtualMemoryTable[Index].VirtualBase    = 0xC0000000;
+  VirtualMemoryTable[Index].Length         = 0x00400000;
+  VirtualMemoryTable[Index].Attributes     = SOC_REGISTERS_ATTRIBUTES;
+
   // PCIe root complex.
   //
   // The device tree has pcie@7d500000 as a sibling of the soc node rather than a
