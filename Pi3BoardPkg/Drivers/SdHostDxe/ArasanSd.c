@@ -490,9 +490,14 @@ ArasanSendCommand (
         UINT16   BlockCount;
 
         BlockCount   = IsMultiple ? ARASAN_SD_MULTI_BLOCK_COUNT : 1;
-        TransferMode = SDHCI_TM_BLOCK_COUNT_EN;
+        TransferMode = 0;
         if (IsMultiple) {
-            TransferMode |= SDHCI_TM_MULTI_BLOCK;
+            //
+            // Block count enable only means anything for a multiple block
+            // transfer; setting it on a single block transfer makes the
+            // controller wait for block counting that never starts.
+            //
+            TransferMode |= SDHCI_TM_BLOCK_COUNT_EN | SDHCI_TM_MULTI_BLOCK;
         }
         if (IsRead) {
             TransferMode |= SDHCI_TM_READ;
@@ -649,14 +654,36 @@ ArasanReadBlockData (
         Buffer[WordIndex] = MmioRead32 (ARASAN_SD_BASE + SDHCI_BUFFER_DATA_PORT);
     }
 
+    //
+    // Let the transfer complete before the caller moves on to the next command,
+    // otherwise the controller is left with the data lines busy and the next
+    // CMD17/CMD18 fails with an Auto CMD12 style error.
+    //
+    for (Spin = 0; Spin < ARASAN_SD_DATA_POLL_COUNT; Spin++) {
+        Status = MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS);
+        if ((Status & SDHCI_INT_XFER_COMPLETE) != 0) {
+            break;
+        }
+        if (MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS) != 0) {
+            break;
+        }
+    }
+
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS,
                  SDHCI_INT_BUF_READ_READY | SDHCI_INT_BUF_WRITE_READY |
                  SDHCI_INT_XFER_COMPLETE);
 
+    //
+    // The last four words cover offsets 0x1F0..0x1FF of the block, which is
+    // where a partition table lives: the MBR signature is 0x55 0xAA at 0x1FE,
+    // so (Buffer[last] >> 16) == 0xAA55 means the block really is an MBR and the
+    // addressing and data path are both correct.
+    //
     DEBUG ((
         DEBUG_INIT,
-        "ArasanSd: read LBA 0x%x, %d bytes ok, first word 0x%08x\n",
-        (UINT32)Lba, (UINT32)Length, Buffer[0]));
+        "ArasanSd: read LBA 0x%x, %d bytes ok, first=0x%08x tail=%08x %08x %08x %08x\n",
+        (UINT32)Lba, (UINT32)Length, Buffer[0],
+        Buffer[Words - 4], Buffer[Words - 3], Buffer[Words - 2], Buffer[Words - 1]));
 
     return EFI_SUCCESS;
 }
