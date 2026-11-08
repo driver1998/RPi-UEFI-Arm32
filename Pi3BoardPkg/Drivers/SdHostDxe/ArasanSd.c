@@ -622,8 +622,16 @@ ArasanReadBlockData (
                 return EFI_DEVICE_ERROR;
             }
 
+            //
+            // Accept either buffer ready bit. A read should only ever report
+            // BUFFER_READ_READY, but this controller asserts BUFFER_WRITE_READY
+            // (0x0010) on a read transfer, so the pair looks inverted here. This
+            // backend only implements reads, so treating either bit as "a word
+            // can be taken from the buffer data port" is safe and keeps the
+            // driver independent of the discrepancy.
+            //
             if ((MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS) &
-                 SDHCI_INT_BUF_READ_READY) != 0) {
+                 (SDHCI_INT_BUF_READ_READY | SDHCI_INT_BUF_WRITE_READY)) != 0) {
                 break;
             }
         }
@@ -642,10 +650,11 @@ ArasanReadBlockData (
     }
 
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS,
-                 SDHCI_INT_BUF_READ_READY | SDHCI_INT_XFER_COMPLETE);
+                 SDHCI_INT_BUF_READ_READY | SDHCI_INT_BUF_WRITE_READY |
+                 SDHCI_INT_XFER_COMPLETE);
 
     DEBUG ((
-        DEBUG_MMCHOST_SD,
+        DEBUG_INIT,
         "ArasanSd: read LBA 0x%x, %d bytes ok, first word 0x%08x\n",
         (UINT32)Lba, (UINT32)Length, Buffer[0]));
 
