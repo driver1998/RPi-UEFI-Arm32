@@ -628,15 +628,17 @@ ArasanReadBlockData (
             }
 
             //
-            // Accept either buffer ready bit. A read should only ever report
-            // BUFFER_READ_READY, but this controller asserts BUFFER_WRITE_READY
-            // (0x0010) on a read transfer, so the pair looks inverted here. This
-            // backend only implements reads, so treating either bit as "a word
-            // can be taken from the buffer data port" is safe and keeps the
-            // driver independent of the discrepancy.
+            // Require BUFFER_READ_READY specifically.
+            //
+            // Accepting BUFFER_WRITE_READY here as well was a mistake: this
+            // controller keeps that bit asserted while idle, so the loop passed
+            // immediately and six hundred bytes of empty buffer came back as a
+            // successful read of all zeros. A read transfer must report
+            // BUFFER_READ_READY, and anything else means the controller is not
+            // doing the transfer we think it is.
             //
             if ((MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS) &
-                 (SDHCI_INT_BUF_READ_READY | SDHCI_INT_BUF_WRITE_READY)) != 0) {
+                 SDHCI_INT_BUF_READ_READY) != 0) {
                 break;
             }
         }
@@ -644,9 +646,16 @@ ArasanReadBlockData (
         if (Spin == ARASAN_SD_DATA_POLL_COUNT) {
             DEBUG ((
                 DEBUG_ERROR,
-                "ArasanSd: read timed out at word %d of LBA 0x%x, normal=0x%04x\n",
+                "ArasanSd: read timed out at word %d of LBA 0x%x, normal=0x%04x error=0x%04x "
+                "present=0x%08x xfermode=0x%04x cmd=0x%04x block=0x%04x count=0x%04x\n",
                 (UINT32)WordIndex, (UINT32)Lba,
-                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS)));
+                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS),
+                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS),
+                MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE),
+                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE),
+                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_COMMAND),
+                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT),
+                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT + 2)));
             ArasanResetCmdLine ();
             return EFI_TIMEOUT;
         }
