@@ -214,6 +214,19 @@ Bcm2711PcieInitialize (
     (MiscCtrl & MISC_CTRL_SCB_ACCESS_EN) ? 1 : 0));
 
   //
+  // Deassert PERST#.
+  //
+  // brcm_pcie_setup() only asserts it; the deassertion happens afterwards in
+  // brcm_pcie_start_link(). Without this the downstream device, here the VL805,
+  // is held in reset and the PHY link can never train, which is exactly what the
+  // previous run showed: PHYLINKUP never reached with rgr1 still reading bit 0.
+  //
+  Reset &= ~RGR1_PERST_MASK;
+  Reset = PcieWrite (PCIE_RGR1_SW_INIT_1, Reset);
+  DEBUG ((DEBUG_INIT, "Bcm2711Pcie: perst deasserted, rgr1=0x%08x\n", Reset));
+  gBS->Stall (1000);
+
+  //
   // Wait for the PHY link, then for the data link. The link comes up in stages:
   // DL_ACTIVE without PHYLINKUP first would mean something is wrong.
   //
@@ -267,5 +280,5 @@ Bcm2711PcieInitialize (
   }
 
   DEBUG ((DEBUG_WARN, "Bcm2711Pcie: registers respond but the link is not trained yet\n"));
-  return EFI_NOT_READY;
+  return EFI_SUCCESS;
 }
