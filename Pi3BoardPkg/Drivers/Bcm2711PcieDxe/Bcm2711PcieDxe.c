@@ -460,7 +460,7 @@ Bcm2711PcieInitialize (
     //   CPU side limit     : WIN0_BASE_LIMIT bits[31:20], in MB
     //   upper bits         : WIN0_BASE_HI / WIN0_LIMIT_HI
     //
-    MmioWrite32 (PCIE_RC_BASE + PCIE_MEM_WIN0_LO, 0xF8000000);
+    MmioWrite32 (PCIE_RC_BASE + PCIE_MEM_WIN0_LO, (UINT32)PCIE_WINDOW_DEVICE_ADDR);
     MmioWrite32 (PCIE_RC_BASE + PCIE_MEM_WIN0_HI, 0x00000000);
 
     Window = MmioRead32 (PCIE_RC_BASE + PCIE_MEM_WIN0_BASE_LIMIT);
