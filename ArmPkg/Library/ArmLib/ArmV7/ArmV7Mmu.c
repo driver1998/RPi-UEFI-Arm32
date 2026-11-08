@@ -49,7 +49,13 @@
 // The data cache is therefore left off for now so that console work runs on a
 // known-good base; the Write-Through configuration is kept in Pi2Board.h.
 //
-#define ENABLE_DATA_CACHE          1
+// Later bisect with both caches enabled got much further - DecompressFirstFv
+// (LZMA) returned success and the boot stalled inside LoadPeCoffImage, at the
+// PeCoffLoaderLoadImage header copy into the freshly allocated image buffer
+// (SizeOfHeaders was a sane 0x240, the copy simply never returned). See
+// README.caches.md for the full chain, including what was ruled out.
+//
+#define ENABLE_DATA_CACHE          0
 
 UINT32
 ConvertSectionAttributesToPageAttributes (
