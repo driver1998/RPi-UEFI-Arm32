@@ -1353,7 +1353,19 @@ PeCoffLoaderLoadImage (
   // Load each section of the image
   //
   Section = FirstSection;
+  DEBUG ((
+    DEBUG_INIT,
+    "     PeCoffLoaderLoadImage: %d sections, first at 0x%08x, image 0x%08x\n",
+    (UINT32)NumberOfSections, (UINT32)(UINTN)FirstSection,
+    (UINT32)ImageContext->ImageAddress));
   for (Index = 0; Index < NumberOfSections; Index++) {
+    if (Index < 24) {
+      DEBUG ((
+        DEBUG_INIT,
+        "     section %d: virt 0x%x, rawsize 0x%x, virtsize 0x%x, ptr 0x%x\n",
+        (UINT32)Index, Section->VirtualAddress, Section->SizeOfRawData,
+        Section->Misc.VirtualSize, Section->PointerToRawData));
+    }
     //
     // Read the section
     //
