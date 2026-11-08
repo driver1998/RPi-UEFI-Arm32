@@ -43,6 +43,21 @@
 #define PCIE_MISC_HARD_PCIE_HARD_DEBUG      0x4204
 #define  HARD_DEBUG_SERDES_IDDQ             0x08000000
 
+//
+// Reset control register.
+//
+// bcm2711_cfg selects the generic helpers and both of them operate on this one
+// register, whose offset comes from pcie_offsets[] in pcie-brcmstb.c:
+//
+//   [RGR1_SW_INIT_1]                 = 0x9210
+//   RGR1_SW_INIT_1_INIT_GENERIC_MASK = 0x2, shift 1   (bridge software init)
+//   RGR1_SW_INIT_1_PERST_MASK        = 0x1            (PERST#)
+//
+#define PCIE_RGR1_SW_INIT_1                 0x9210
+#define  RGR1_INIT_MASK                     0x2
+#define  RGR1_INIT_SHIFT                    1
+#define  RGR1_PERST_MASK                    0x1
+
 /**
   Read one root complex register.
 **/
@@ -109,6 +124,7 @@ Bcm2711PcieInitialize (
   UINT32  HardDebug;
   UINT32  MiscCtrl;
   UINT32  Status;
+  UINT32  Reset;
 
   DEBUG ((DEBUG_INIT, "Bcm2711Pcie: bring-up starting at 0x%08x\n", (UINT32)PCIE_RC_BASE));
 
@@ -166,10 +182,33 @@ Bcm2711PcieInitialize (
   }
 
   //
+  // Mirror the start of brcm_pcie_setup(): hold the bridge in reset, assert
+  // PERST#, wait, release the bridge, then take the SERDES out of IDDQ.
+  //
+  // Both reset controls live in PCIE_RGR1_SW_INIT_1: bit 1 is the bridge
+  // software init and bit 0 is PERST#.
+  //
+  Reset = PcieRead (PCIE_RGR1_SW_INIT_1);
+  DEBUG ((DEBUG_INIT, "Bcm2711Pcie: rgr1 before=0x%08x\n", Reset));
+
+  Reset &= ~RGR1_INIT_MASK;
+  Reset |= (1U << RGR1_INIT_SHIFT) & RGR1_INIT_MASK;     // hold bridge in reset
+  Reset = PcieWrite (PCIE_RGR1_SW_INIT_1, Reset);
+
+  Reset |= RGR1_PERST_MASK;                              // assert PERST#
+  Reset = PcieWrite (PCIE_RGR1_SW_INIT_1, Reset);
+  gBS->Stall (200);
+
+  Reset &= ~RGR1_INIT_MASK;                              // release the bridge
+  Reset = PcieWrite (PCIE_RGR1_SW_INIT_1, Reset);
+  DEBUG ((DEBUG_INIT, "Bcm2711Pcie: rgr1 after=0x%08x (perst asserted, bridge released)\n", Reset));
+
+  //
   // Take the SERDES out of IDDQ so the PHY can start its clocks.
   //
   HardDebug &= ~HARD_DEBUG_SERDES_IDDQ;
   HardDebug = PcieWrite (PCIE_MISC_HARD_PCIE_HARD_DEBUG, HardDebug);
+  gBS->Stall (200);
 
   //
   // Enable SCB access, which is what makes the config space windows usable, and
