@@ -26,9 +26,9 @@
 #include <BcmMailbox.h>
 
 //
-// BCM2711 PCIe root complex: pcie@7d500000, 0xFD500000 in the high alias.
+// BCM2711 PCIe root complex: pcie@7d500000, which maps directly to 0x7D500000 (it is a sibling of the soc node, so it is not subject to the 0x7e000000 to 0xfe000000 translation).
 //
-#define PCIE_RC_BASE                        0xFD500000UL
+#define PCIE_RC_BASE                        0x7D500000UL
 
 #define PCIE_MISC_MISC_CTRL                 0x4008
 #define  MISC_CTRL_SCB_ACCESS_EN            (1U << 12)

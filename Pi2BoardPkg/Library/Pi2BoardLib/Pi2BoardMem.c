@@ -81,16 +81,17 @@ ArmPlatformGetVirtualMemoryMap (
   //
   // PCIe root complex.
   //
-  // On BCM2711 PCIe is pcie@7d500000, i.e. 0xFD500000 in the high peripheral
-  // alias, which sits *below* SOC_REGISTERS_PHYSICAL_BASE (0xFE000000) and was
-  // therefore not mapped at all: the first register read in the PCIe driver took
-  // a translation fault. Map the whole 0xFC000000..0xFDFFFFFF span as device
-  // memory, and keep this entry before the SoC one because regions are filled in
-  // ascending order.
+  // The device tree has pcie@7d500000 as a sibling of the soc node rather than a
+  // child of it, so it is *not* subject to the soc ranges translation of
+  // 0x7e000000 to 0xfe000000. Its CPU physical address is 0x7D500000 itself, and
+  // the 0xFD500000 used at first does not exist: every access there timed out on
+  // the bus and read back zero, which looked exactly like an unclocked block.
+  // Map 0x7D000000..0x7DFFFFFF as device memory, before the SoC entry because
+  // regions are filled in ascending order.
   //
-  VirtualMemoryTable[++Index].PhysicalBase = 0xFC000000;
-  VirtualMemoryTable[Index].VirtualBase    = 0xFC000000;
-  VirtualMemoryTable[Index].Length         = 0x02000000;
+  VirtualMemoryTable[++Index].PhysicalBase = 0x7D000000;
+  VirtualMemoryTable[Index].VirtualBase    = 0x7D000000;
+  VirtualMemoryTable[Index].Length         = 0x01000000;
   VirtualMemoryTable[Index].Attributes     = SOC_REGISTERS_ATTRIBUTES;
 
   // SOC peripheral registers.
