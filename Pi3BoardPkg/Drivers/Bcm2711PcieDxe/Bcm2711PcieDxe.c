@@ -187,6 +187,36 @@ PcieReadConfig32 (
 /**
   Print vendor and device id for one function.
 **/
+/**
+  Write a 32 bit PCI configuration register.
+**/
+STATIC
+VOID
+PcieWriteConfig32 (
+  IN UINT32  Bus,
+  IN UINT32  Device,
+  IN UINT32  Function,
+  IN UINT32  Offset,
+  IN UINT32  Value
+  )
+{
+  UINT32  Register = Offset & 0xFFF;
+
+  if (Bus == 0) {
+    if ((Device != 0) || (Function != 0)) {
+      return;
+    }
+    MmioWrite32 (PCIE_RC_BASE + Register, Value);
+    return;
+  }
+
+  MmioWrite32 (
+    PCIE_RC_BASE + PCIE_EXT_CFG_INDEX,
+    PCIE_ECAM_OFFSET (Bus, Device, Function)
+    );
+  MmioWrite32 (PCIE_RC_BASE + PCIE_EXT_CFG_DATA + Register, Value);
+}
+
 STATIC
 VOID
 PciePrintDevice (
@@ -225,14 +255,15 @@ Bcm2711PcieInitialize (
 
   DEBUG ((DEBUG_INIT, "Bcm2711Pcie: bring-up starting at 0x%08x\n", (UINT32)PCIE_RC_BASE));
 
-  HardDebug = PcieRead (PCIE_MISC_HARD_PCIE_HARD_DEBUG);
-  MiscCtrl  = PcieRead (PCIE_MISC_MISC_CTRL);
-  Status    = PcieRead (PCIE_MISC_PCIE_STATUS);
-  PrintLinkStatus ("before", Status);
-  DEBUG ((
-    DEBUG_INIT,
-    "Bcm2711Pcie: before: hard_debug=0x%08x misc_ctrl=0x%08x\n",
-    HardDebug, MiscCtrl));
+  //
+  // No pre-flight probe. The firmware leaves the block held in reset, so every
+  // read before the reset sequence is released returns zero after the full AXI
+  // timeout, which cost about thirty seconds per boot and told us nothing. The
+  // first meaningful read is the one after PERST# is deasserted.
+  //
+  HardDebug = 0;
+  MiscCtrl  = 0;
+  Status    = 0;
 
   if ((HardDebug == 0) && (MiscCtrl == 0) && (Status == 0)) {
     //
@@ -351,17 +382,40 @@ Bcm2711PcieInitialize (
 
   if ((Status & PCIE_STATUS_DL_ACTIVE) != 0) {
     UINT32  Device;
+    UINT32  Command;
 
     DEBUG ((DEBUG_INIT, "Bcm2711Pcie: data link is active\n"));
 
     //
     // The link is up, so config space should work. Read the root complex's own
-    // ids first: that needs no index write and proves the direct mapping. Then
-    // walk the downstream bus, where the VL805 xHCI controller lives and should
-    // answer with VIA's vendor id 0x1106 and device 0x3483.
+    // ids first: that needs no index write and proves the direct mapping.
     //
     PciePrintDevice (0, 0, 0);
 
+    //
+    // Program the root complex as a bridge so configuration cycles are forwarded
+    // downstream. Until the primary, secondary and subordinate bus numbers are
+    // set, the root bus answers for itself and nothing below it is reachable,
+    // which is exactly what the previous run showed: 0:0.0 read fine and bus 1
+    // was empty.
+    //
+    //   0x18: primary 0, secondary 1, subordinate 1
+    //   0x04: memory space enable + bus master enable
+    //
+    PcieWriteConfig32 (0, 0, 0, 0x18, 0x00010100);
+    Command = PcieReadConfig32 (0, 0, 0, 0x04);
+    Command |= 0x0006;
+    PcieWriteConfig32 (0, 0, 0, 0x04, Command);
+    DEBUG ((
+      DEBUG_INIT,
+      "Bcm2711Pcie: bridge programmed, bus numbers=0x%08x command=0x%04x\n",
+      PcieReadConfig32 (0, 0, 0, 0x18),
+      PcieReadConfig32 (0, 0, 0, 0x04) & 0xFFFF));
+
+    //
+    // Now walk the downstream bus, where the VL805 xHCI controller lives and
+    // should answer with VIA's vendor id 0x1106 and device 0x3483.
+    //
     for (Device = 0; Device < 32; Device++) {
       PciePrintDevice (1, Device, 0);
     }
