@@ -381,7 +381,6 @@ Bcm2711PcieInitialize (
   }
 
   if ((Status & PCIE_STATUS_DL_ACTIVE) != 0) {
-    UINT32  Device;
     UINT32  Command;
 
     DEBUG ((DEBUG_INIT, "Bcm2711Pcie: data link is active\n"));
@@ -414,11 +413,15 @@ Bcm2711PcieInitialize (
 
     //
     // Now walk the downstream bus, where the VL805 xHCI controller lives and
-    // should answer with VIA's vendor id 0x1106 and device 0x3483.
+    // answered on the first try with VIA's vendor id 0x1106 and device 0x3483.
     //
-    for (Device = 0; Device < 32; Device++) {
-      PciePrintDevice (1, Device, 0);
-    }
+    // Only device 0 is probed. Reading the configuration space of a device that
+    // is not there makes the root complex retry until
+    // PCIE_MISC_RC_CONFIG_RETRY_TIMEOUT expires, which costs seconds per access:
+    // scanning all 32 device numbers stalled the boot for about a minute after
+    // the VL805 line was printed.
+    //
+    PciePrintDevice (1, 0, 0);
 
     return EFI_SUCCESS;
   }
