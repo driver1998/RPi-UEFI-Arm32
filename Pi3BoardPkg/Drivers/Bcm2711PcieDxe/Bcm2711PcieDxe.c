@@ -332,6 +332,17 @@ Bcm2711PcieInitialize (
   MiscCtrl &= ~MISC_CTRL_MAX_BURST_SIZE_MASK;      // 0 = 128 bytes on BCM2711
   MiscCtrl = PcieWrite (PCIE_MISC_MISC_CTRL, MiscCtrl);
 
+  //
+  // The SCB decode size was zero, which leaves the root complex with no
+  // address decode range at all. brcm_pcie_setup computes it as
+  // ilog2(memc_size) - 15; 15 corresponds to a 1 GB range, which covers
+  // the 944 MB this board reports.
+  //
+  MiscCtrl  = MmioRead32 (PCIE_RC_BASE + PCIE_MISC_MISC_CTRL);
+  MiscCtrl &= ~0xF8000000;
+  MiscCtrl |= (15UL & 0x1F) << 27;
+  MmioWrite32 (PCIE_RC_BASE + PCIE_MISC_MISC_CTRL, MiscCtrl);
+
   DEBUG ((
     DEBUG_INIT,
     "Bcm2711Pcie: after: hard_debug=0x%08x misc_ctrl=0x%08x (scb_en=%d)\n",
@@ -427,8 +438,8 @@ Bcm2711PcieInitialize (
     // PCI 0xF8000000..0xFBFFFFFF; on a 32 bit bridge both registers hold address
     // bits[31:20] in bits[15:4].
     //
-    PcieWriteConfig32 (0, 0, 0, 0x20, 0xF800);
-    PcieWriteConfig32 (0, 0, 0, 0x24, 0xFBF0);
+    PcieWriteConfig32 (0, 0, 0, 0x20, 0xC000);
+    PcieWriteConfig32 (0, 0, 0, 0x24, 0xC030);
 
     Command = PcieReadConfig32 (0, 0, 0, 0x04);
     Command |= 0x0006;
