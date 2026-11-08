@@ -1254,8 +1254,10 @@ PeCoffLoaderLoadImage (
   // is legit.
   //
   CopyMem (&CheckContext, ImageContext, sizeof (PE_COFF_LOADER_IMAGE_CONTEXT));
+  DEBUG ((DEBUG_INIT, "     PeCoffLoaderLoadImage: context copied\n"));
 
   Status = PeCoffLoaderGetImageInfo (&CheckContext);
+  DEBUG ((DEBUG_INIT, "     PeCoffLoaderLoadImage: inner GetImageInfo returned 0x%x\n", (UINT32)Status));
   if (RETURN_ERROR (Status)) {
     return Status;
   }
@@ -1348,6 +1350,11 @@ PeCoffLoaderLoadImage (
     ImageContext->ImageError = IMAGE_ERROR_IMAGE_READ;
     return RETURN_LOAD_ERROR;
   }
+
+  DEBUG ((
+    DEBUG_INIT,
+    "     PeCoffLoaderLoadImage: header read returned 0x%x, teoffset 0x%x\n",
+    (UINT32)Status, (UINT32)TeStrippedOffset));
 
   //
   // Load each section of the image
