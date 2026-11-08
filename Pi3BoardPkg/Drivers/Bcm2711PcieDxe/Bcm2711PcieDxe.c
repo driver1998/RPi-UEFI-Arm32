@@ -20,7 +20,10 @@
 
 #include <Library/DebugLib.h>
 #include <Library/IoLib.h>
+#include <Library/BaseMemoryLib.h>
 #include <Library/UefiBootServicesTableLib.h>
+
+#include <BcmMailbox.h>
 
 //
 // BCM2711 PCIe root complex: pcie@7d500000, 0xFD500000 in the high alias.
@@ -119,10 +122,47 @@ Bcm2711PcieInitialize (
     HardDebug, MiscCtrl));
 
   if ((HardDebug == 0) && (MiscCtrl == 0) && (Status == 0)) {
+    //
+    // Do not write anything in this state: a write to an unclocked block hangs
+    // for the full AXI timeout just like a read (the previous build stalled
+    // here), and it cannot take effect anyway.
+    //
     DEBUG ((
       DEBUG_ERROR,
       "Bcm2711Pcie: all three registers read zero, the block is unclocked; "
-      "enable the PCIe clock first\n"));
+      "the PCIe clock has to be enabled before any of this can work\n"));
+
+    //
+    // Query, but never set, a range of Pi firmware clock ids so the log shows
+    // which of them exist and at what rate. Read only on purpose: setting the
+    // wrong clock could disturb an unrelated part of the SoC.
+    //
+    {
+      UINT32  ClockId;
+
+      for (ClockId = 1; ClockId <= 15; ClockId++) {
+        MAILBOX_GET_CLOCK_RATE  Query;
+        EFI_STATUS              QueryStatus;
+
+        ZeroMem ((void *)&Query, sizeof (Query));
+        Query.Header.BufferSize = sizeof (Query);
+        Query.Header.TagID      = TAG_GET_CLOCK_RATE;
+        Query.Header.TagLength  = 8;
+        Query.ClockId           = ClockId;
+
+        QueryStatus = MailboxProperty (
+                        MAILBOX_CHANNEL_PROPERTY_ARM_VC,
+                        (MAILBOX_HEADER *)&Query
+                        );
+        DEBUG ((
+          DEBUG_INIT,
+          "Bcm2711Pcie: clock id %d -> %r, rate %d Hz\n",
+          ClockId, QueryStatus, Query.Rate
+          ));
+      }
+    }
+
+    return EFI_DEVICE_ERROR;
   }
 
   //
