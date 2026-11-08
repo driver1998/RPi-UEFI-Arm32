@@ -482,8 +482,9 @@ Bcm2711PcieInitialize (
 
     DEBUG ((
       DEBUG_INIT,
-      "Bcm2711Pcie: window cpu 0x%08x..0x%08x -> pci 0xF8000000, bar0=0x%08x, command=0x%04x\n",
+      "Bcm2711Pcie: window cpu 0x%08x..0x%08x -> pci 0x%08x, bar0=0x%08x, command=0x%04x\n",
       (UINT32)PCIE_WINDOW_CPU_BASE, (UINT32)PCIE_WINDOW_CPU_END,
+      MmioRead32 (PCIE_RC_BASE + PCIE_MEM_WIN0_LO),
       PcieReadConfig32 (1, 0, 0, 0x10),
       PcieReadConfig32 (1, 0, 0, 0x04) & 0xFFFF));
 
@@ -492,6 +493,14 @@ Bcm2711PcieInitialize (
     // HCIVERSION, so a plausible value here means config space, the outbound
     // window and the BAR assignment all work together.
     //
+    DEBUG ((
+      DEBUG_INIT,
+      "Bcm2711Pcie: readback win0_lo=0x%08x base_limit=0x%08x misc_ctrl=0x%08x (scb0_size=%d)\n",
+      MmioRead32 (PCIE_RC_BASE + PCIE_MEM_WIN0_LO),
+      MmioRead32 (PCIE_RC_BASE + PCIE_MEM_WIN0_BASE_LIMIT),
+      MmioRead32 (PCIE_RC_BASE + PCIE_MISC_MISC_CTRL),
+      (MmioRead32 (PCIE_RC_BASE + PCIE_MISC_MISC_CTRL) >> 27) & 0x1F));
+
     DEBUG ((
       DEBUG_INIT,
       "Bcm2711Pcie: xHCI CAPLENGTH/HCIVERSION at 0x%08x = 0x%08x\n",
