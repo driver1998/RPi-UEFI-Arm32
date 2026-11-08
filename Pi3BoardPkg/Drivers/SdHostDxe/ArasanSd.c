@@ -22,6 +22,7 @@
 #include <Library/IoLib.h>
 #include <Library/DebugLib.h>
 #include <Library/BaseMemoryLib.h>
+#include <Library/MemoryAllocationLib.h>
 #include <Library/PcdLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Protocol/MmcHost.h>
@@ -51,6 +52,7 @@
 //
 // SDHCI register offsets
 //
+#define SDHCI_DMA_ADDRESS           0x00
 #define SDHCI_BLOCK_SIZE_COUNT      0x04
 #define SDHCI_ARGUMENT              0x08
 #define SDHCI_TRANSFER_MODE         0x0C
@@ -128,6 +130,7 @@
 //
 // SDHCI_TRANSFER_MODE bits
 //
+#define SDHCI_TM_DMA_ENABLE         (1U << 0)
 #define SDHCI_TM_BLOCK_COUNT_EN     (1U << 1)
 #define SDHCI_TM_READ               (1U << 3)
 #define SDHCI_TM_MULTI_BLOCK        (1U << 4)
@@ -147,6 +150,49 @@
 
 static BOOLEAN  mArasanInitialized     = FALSE;
 static BOOLEAN  mArasanAtTransferClock = FALSE;
+
+//
+// SDMA bounce buffer for the data path.
+//
+// PIO was tried first and never produced a payload: the controller accepted the
+// command, reported the DAT line active, raised no error, and the buffer data
+// port returned zeros. The working Linux configuration uses DMA (its
+// TRANSFER_MODE has DMA Enable set), so the data path moves to single address
+// DMA, which this controller appears to require.
+//
+// The driver runs with the data cache disabled and the memory map is identity
+// mapped, so the buffer's virtual address is also its physical address and no
+// cache maintenance is needed.
+//
+static VOID   *mArasanDmaBuffer     = NULL;
+static UINTN   mArasanDmaBlockIndex = 0;
+
+STATIC
+EFI_STATUS
+ArasanEnsureDmaBuffer (
+  VOID
+  )
+{
+    if (mArasanDmaBuffer != NULL) {
+        return EFI_SUCCESS;
+    }
+
+    mArasanDmaBuffer = AllocatePages (
+                         EFI_SIZE_TO_PAGES (
+                           (UINTN)SDHCI_BLOCK_BYTE_LENGTH * ARASAN_SD_MULTI_BLOCK_COUNT));
+    if (mArasanDmaBuffer == NULL) {
+        DEBUG ((DEBUG_ERROR, "ArasanSd: failed to allocate the SDMA buffer\n"));
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    DEBUG ((
+        DEBUG_INIT,
+        "ArasanSd: SDMA buffer at 0x%08x, %d bytes\n",
+        (UINT32)(UINTN)mArasanDmaBuffer,
+        (UINT32)SDHCI_BLOCK_BYTE_LENGTH * ARASAN_SD_MULTI_BLOCK_COUNT));
+
+    return EFI_SUCCESS;
+}
 
 /**
   Reset the command (and data) line after a failed command.
@@ -524,6 +570,22 @@ ArasanSendCommand (
         MmioWrite16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT,
                      SDHCI_BLOCK_BYTE_LENGTH | SDHCI_BLOCK_BOUNDARY_4K);
         MmioWrite16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT + 2, BlockCount);
+
+        //
+        // Point single address DMA at the bounce buffer and start at its
+        // beginning. Every block of a multiple block transfer lands after the
+        // previous one, and ReadBlockData() advances an index as MmcDxe asks for
+        // one block at a time.
+        //
+        if (!EFI_ERROR (ArasanEnsureDmaBuffer ())) {
+            mArasanDmaBlockIndex = 0;
+            MmioWrite32 (ARASAN_SD_BASE + SDHCI_DMA_ADDRESS,
+                         (UINT32)(UINTN)mArasanDmaBuffer);
+            TransferMode |= SDHCI_TM_DMA_ENABLE;
+        } else {
+            DEBUG ((DEBUG_ERROR, "ArasanSd: no SDMA buffer, falling back to PIO\n"));
+        }
+
         MmioWrite16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE, TransferMode);
 
         Command |= SDHCI_CMD_DATA_PRESENT;
@@ -617,104 +679,88 @@ ArasanReadBlockData (
     OUT UINT32                  *Buffer
     )
 {
-    UINTN   Words;
-    UINTN   WordIndex;
-    UINTN   Spin;
-    UINT16  Status;
+    UINTN    Spin;
+    UINTN    Offset;
+    UINT8   *Source;
+    UINT16   Status;
+    UINT16   Error;
+    BOOLEAN  Done;
 
     if (Buffer == NULL) {
         return EFI_INVALID_PARAMETER;
     }
 
+    if (mArasanDmaBuffer == NULL) {
+        DEBUG ((DEBUG_ERROR, "ArasanSd: read with no SDMA buffer, LBA 0x%x\n", (UINT32)Lba));
+        return EFI_DEVICE_ERROR;
+    }
+
     //
-    // MmcDxe already sent CMD17/CMD18 and set the transfer descriptor up in
-    // ArasanSendCommand, so this only has to drain the buffer data port. The
-    // buffer is fed one block at a time; BUFFER_READ_READY stays asserted while
-    // the current block still has words left in it.
+    // MmcDxe sent CMD17/CMD18 and ArasanSendCommand pointed SDMA at the bounce
+    // buffer, so this only has to wait for the data and copy the block out.
     //
-    Words = Length / sizeof (UINT32);
-
-    for (WordIndex = 0; WordIndex < Words; WordIndex++) {
-        for (Spin = 0; Spin < ARASAN_SD_DATA_POLL_COUNT; Spin++) {
-            Status = MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS);
-            if (Status != 0) {
-                DEBUG ((
-                    DEBUG_ERROR,
-                    "ArasanSd: read error at word %d of LBA 0x%x, error=0x%04x\n",
-                    (UINT32)WordIndex, (UINT32)Lba, Status));
-                ArasanResetCmdLine ();
-                return EFI_DEVICE_ERROR;
-            }
-
-            //
-            // Wait for the buffer ready bit that this controller actually uses.
-            //
-            // Per the SDHCI specification bit 4 is BUFFER_WRITE_READY and bit 5
-            // is BUFFER_READ_READY, but on this Arasan the pair behaves the other
-            // way round: a read transfer in progress (PRESENT_STATE shows the DAT
-            // line active and the command was accepted, transfer mode reads back
-            // 0x0008 for read) raises bit 4 and never raises bit 5.
-            //
-            // Accepting both bits is not an option: BUFFER_WRITE_READY is also
-            // asserted while idle, which made an earlier version "succeed" by
-            // reading 128 words out of an empty buffer. So require bit 4 only.
-            //
-            if ((MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS) &
-                 SDHCI_INT_BUF_WRITE_READY) != 0) {
-                break;
-            }
-        }
-
-        if (Spin == ARASAN_SD_DATA_POLL_COUNT) {
+    // A single block transfer completes as one unit. A multiple block transfer
+    // is terminated by the CMD12 that MmcDxe sends after the blocks it wants, so
+    // a block is also accepted as soon as the controller reports the buffer
+    // readable.
+    //
+    Done = FALSE;
+    for (Spin = 0; Spin < ARASAN_SD_DATA_POLL_COUNT; Spin++) {
+        Error = MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS);
+        if (Error != 0) {
             DEBUG ((
                 DEBUG_ERROR,
-                "ArasanSd: read timed out at word %d of LBA 0x%x, normal=0x%04x error=0x%04x "
-                "present=0x%08x xfermode=0x%04x cmd=0x%04x block=0x%04x count=0x%04x\n",
-                (UINT32)WordIndex, (UINT32)Lba,
-                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS),
-                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS),
-                MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE),
-                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE),
-                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_COMMAND),
-                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT),
-                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT + 2)));
+                "ArasanSd: read error at LBA 0x%x, error=0x%04x present=0x%08x\n",
+                (UINT32)Lba, Error,
+                MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE)));
             ArasanResetCmdLine ();
-            return EFI_TIMEOUT;
+            return EFI_DEVICE_ERROR;
         }
 
-        Buffer[WordIndex] = MmioRead32 (ARASAN_SD_BASE + SDHCI_BUFFER_DATA_PORT);
-    }
-
-    //
-    // Let the transfer complete before the caller moves on to the next command,
-    // otherwise the controller is left with the data lines busy and the next
-    // CMD17/CMD18 fails with an Auto CMD12 style error.
-    //
-    for (Spin = 0; Spin < ARASAN_SD_DATA_POLL_COUNT; Spin++) {
         Status = MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS);
-        if ((Status & SDHCI_INT_XFER_COMPLETE) != 0) {
-            break;
-        }
-        if (MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS) != 0) {
+        if ((Status & (SDHCI_INT_XFER_COMPLETE | SDHCI_INT_BUF_READ_READY)) != 0) {
+            Done = TRUE;
             break;
         }
     }
+
+    if (!Done) {
+        DEBUG ((
+            DEBUG_ERROR,
+            "ArasanSd: read timed out at LBA 0x%x, normal=0x%04x error=0x%04x "
+            "present=0x%08x xfermode=0x%04x cmd=0x%04x block=0x%04x count=0x%04x dma=0x%08x\n",
+            (UINT32)Lba,
+            (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS),
+            (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS),
+            MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE),
+            (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE),
+            (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_COMMAND),
+            (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT),
+            (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT + 2),
+            MmioRead32 (ARASAN_SD_BASE + SDHCI_DMA_ADDRESS)));
+        ArasanResetCmdLine ();
+        return EFI_TIMEOUT;
+    }
+
+    Offset = mArasanDmaBlockIndex * SDHCI_BLOCK_BYTE_LENGTH;
+    Source = (UINT8 *)mArasanDmaBuffer + Offset;
+    CopyMem (Buffer, Source, Length);
+    mArasanDmaBlockIndex++;
 
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS,
-                 SDHCI_INT_BUF_READ_READY | SDHCI_INT_BUF_WRITE_READY |
-                 SDHCI_INT_XFER_COMPLETE);
+                 SDHCI_INT_XFER_COMPLETE | SDHCI_INT_BUF_READ_READY);
 
     //
-    // The last four words cover offsets 0x1F0..0x1FF of the block, which is
-    // where a partition table lives: the MBR signature is 0x55 0xAA at 0x1FE,
-    // so (Buffer[last] >> 16) == 0xAA55 means the block really is an MBR and the
-    // addressing and data path are both correct.
+    // The last four words cover offsets 0x1F0..0x1FF of the block, where a
+    // partition table lives: the MBR signature is 0x55 0xAA at 0x1FE, so
+    // (last >> 16) == 0xAA55 proves the data path and the addressing.
     //
     DEBUG ((
         DEBUG_INIT,
-        "ArasanSd: read LBA 0x%x, %d bytes ok, first=0x%08x tail=%08x %08x %08x %08x\n",
+        "ArasanSd: read LBA 0x%x, %d bytes, first=0x%08x tail=%08x %08x %08x %08x\n",
         (UINT32)Lba, (UINT32)Length, Buffer[0],
-        Buffer[Words - 4], Buffer[Words - 3], Buffer[Words - 2], Buffer[Words - 1]));
+        Buffer[(Length / 4) - 4], Buffer[(Length / 4) - 3],
+        Buffer[(Length / 4) - 2], Buffer[(Length / 4) - 1]));
 
     return EFI_SUCCESS;
 }

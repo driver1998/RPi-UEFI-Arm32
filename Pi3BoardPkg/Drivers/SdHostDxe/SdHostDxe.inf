@@ -33,6 +33,7 @@
 
 [LibraryClasses]
   PcdLib
+  BaseLib
   UefiLib
   UefiDriverEntryPoint
   MemoryAllocationLib
