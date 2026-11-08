@@ -87,8 +87,8 @@ ArmPlatformGetVirtualMemoryMap (
   // 0xC0000000 instead and assigns the VL805's base address registers inside it.
   // Nothing else claims this range.
   //
-  VirtualMemoryTable[++Index].PhysicalBase = 0xC0000000;
-  VirtualMemoryTable[Index].VirtualBase    = 0xC0000000;
+  VirtualMemoryTable[++Index].PhysicalBase = 0x40000000;
+  VirtualMemoryTable[Index].VirtualBase    = 0x40000000;
   VirtualMemoryTable[Index].Length         = 0x00400000;
   VirtualMemoryTable[Index].Attributes     = SOC_REGISTERS_ATTRIBUTES;
 

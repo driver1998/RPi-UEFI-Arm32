@@ -81,8 +81,8 @@
 #define PCIE_MEM_WIN0_BASE_HI               0x4080
 #define PCIE_MEM_WIN0_LIMIT_HI              0x4084
 
-#define PCIE_WINDOW_CPU_BASE                0xC0000000UL
-#define PCIE_WINDOW_CPU_END                 0xC03FFFFFUL
+#define PCIE_WINDOW_CPU_BASE                0x40000000UL
+#define PCIE_WINDOW_CPU_END                 0x403FFFFFUL
 #define PCIE_WINDOW_DEVICE_ADDR             0xC0000000UL
 #define  RGR1_INIT_MASK                     0x2
 #define  RGR1_INIT_SHIFT                    1
