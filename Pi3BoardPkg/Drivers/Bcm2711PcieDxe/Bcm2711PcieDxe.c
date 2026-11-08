@@ -130,6 +130,86 @@ PrintLinkStatus (
   the next step is to get the PCIe clock enabled from the firmware side.
 
 **/
+//
+// Config space access.
+//
+// brcm_pcie_map_bus() in pcie-brcmstb.c shows there is no plain ECAM window:
+//
+//   - the root bus is memory mapped directly, at base + (where & 0xfff)
+//   - for a downstream bus the address is written to EXT_CFG_INDEX (0x9000) and
+//     the data appears at EXT_CFG_DATA (0x8000) plus (where & 0xfff)
+//
+// with the index encoded as PCIE_ECAM_OFFSET(bus, devfn, where) from
+// include/linux/pci-ecam.h: bus << 20 | devfn << 12 | (where & 0xfff).
+//
+#define PCIE_EXT_CFG_INDEX                  0x9000
+#define PCIE_EXT_CFG_DATA                   0x8000
+#define PCIE_ECAM_OFFSET(bus, dev, fn) \
+  ((((UINT32)(bus) & 0xFF) << 20) | ((((UINT32)(dev) << 3 | (UINT32)(fn)) & 0xFF) << 12))
+
+/**
+  Read a 32 bit PCI configuration register.
+
+  @param  Bus     PCI bus number.
+  @param  Device  Device number.
+  @param  Function Function number.
+  @param  Offset  Register offset within the configuration space.
+**/
+STATIC
+UINT32
+PcieReadConfig32 (
+  IN UINT32  Bus,
+  IN UINT32  Device,
+  IN UINT32  Function,
+  IN UINT32  Offset
+  )
+{
+  UINT32  Register = Offset & 0xFFF;
+
+  if (Bus == 0) {
+    //
+    // The root complex's own configuration space is directly mapped. Only
+    // device 0 exists on the root bus.
+    //
+    if ((Device != 0) || (Function != 0)) {
+      return 0xFFFFFFFF;
+    }
+    return MmioRead32 (PCIE_RC_BASE + Register);
+  }
+
+  MmioWrite32 (
+    PCIE_RC_BASE + PCIE_EXT_CFG_INDEX,
+    PCIE_ECAM_OFFSET (Bus, Device, Function)
+    );
+  return MmioRead32 (PCIE_RC_BASE + PCIE_EXT_CFG_DATA + Register);
+}
+
+/**
+  Print vendor and device id for one function.
+**/
+STATIC
+VOID
+PciePrintDevice (
+  IN UINT32  Bus,
+  IN UINT32  Device,
+  IN UINT32  Function
+  )
+{
+  UINT32  Id;
+
+  Id = PcieReadConfig32 (Bus, Device, Function, 0x00);
+  if ((Id == 0xFFFFFFFF) || (Id == 0) || ((Id & 0xFFFF) == 0xFFFF)) {
+    return;
+  }
+
+  DEBUG ((
+    DEBUG_INIT,
+    "Bcm2711Pcie: %d:%d.%d vendor=0x%04x device=0x%04x class=0x%06x\n",
+    Bus, Device, Function, Id & 0xFFFF, (Id >> 16) & 0xFFFF,
+    PcieReadConfig32 (Bus, Device, Function, 0x08) >> 8
+    ));
+}
+
 EFI_STATUS
 EFIAPI
 Bcm2711PcieInitialize (
@@ -270,7 +350,22 @@ Bcm2711PcieInitialize (
   }
 
   if ((Status & PCIE_STATUS_DL_ACTIVE) != 0) {
+    UINT32  Device;
+
     DEBUG ((DEBUG_INIT, "Bcm2711Pcie: data link is active\n"));
+
+    //
+    // The link is up, so config space should work. Read the root complex's own
+    // ids first: that needs no index write and proves the direct mapping. Then
+    // walk the downstream bus, where the VL805 xHCI controller lives and should
+    // answer with VIA's vendor id 0x1106 and device 0x3483.
+    //
+    PciePrintDevice (0, 0, 0);
+
+    for (Device = 0; Device < 32; Device++) {
+      PciePrintDevice (1, Device, 0);
+    }
+
     return EFI_SUCCESS;
   }
 
