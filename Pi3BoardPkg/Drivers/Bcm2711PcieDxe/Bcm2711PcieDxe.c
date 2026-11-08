@@ -83,7 +83,7 @@
 
 #define PCIE_WINDOW_CPU_BASE                0xC0000000UL
 #define PCIE_WINDOW_CPU_END                 0xC03FFFFFUL
-#define PCIE_WINDOW_DEVICE_ADDR             0xF8000000UL
+#define PCIE_WINDOW_DEVICE_ADDR             0xC0000000UL
 #define  RGR1_INIT_MASK                     0x2
 #define  RGR1_INIT_SHIFT                    1
 #define  RGR1_PERST_MASK                    0x1
@@ -334,13 +334,18 @@ Bcm2711PcieInitialize (
 
   //
   // The SCB decode size was zero, which leaves the root complex with no
-  // address decode range at all. brcm_pcie_setup computes it as
-  // ilog2(memc_size) - 15; 15 corresponds to a 1 GB range, which covers
-  // the 944 MB this board reports.
+  // address decode range at all.
+  //
+  // A dump of the same register from Linux with PCIe working reads
+  // 0x88003480, whose SCB0 size field (bits 31:27) is 17, i.e. a 4 GB range.
+  // Using 15 here, a 1 GB range, was a guess and left the access outside the
+  // decoded range, which is exactly the failure observed: the window registers
+  // read back correctly, yet accesses at 0xC0000000 never reached a device.
+  // Match Linux.
   //
   MiscCtrl  = MmioRead32 (PCIE_RC_BASE + PCIE_MISC_MISC_CTRL);
   MiscCtrl &= ~0xF8000000;
-  MiscCtrl |= (15UL & 0x1F) << 27;
+  MiscCtrl |= (17UL & 0x1F) << 27;
   MmioWrite32 (PCIE_RC_BASE + PCIE_MISC_MISC_CTRL, MiscCtrl);
 
   DEBUG ((
@@ -437,11 +442,11 @@ Bcm2711PcieInitialize (
     // registers. With both at zero every access through the window is dropped,
     // which shows up exactly as it did: the device BAR reads back a sensible
     // address while reading that address returns zero. Cover
-    // PCI 0xF8000000..0xFBFFFFFF; on a 32 bit bridge both registers hold address
-    // bits[31:20] in bits[15:4].
+    // PCI 0xC0000000..0xC03FFFFF, the range the device BAR sits in; on a 32 bit
+    // bridge both registers hold address bits[31:20] in bits[15:4].
     //
-    PcieWriteConfig32 (0, 0, 0, 0x20, 0xF800);
-    PcieWriteConfig32 (0, 0, 0, 0x24, 0xFBF0);
+    PcieWriteConfig32 (0, 0, 0, 0x20, 0xC000);
+    PcieWriteConfig32 (0, 0, 0, 0x24, 0xC030);
 
     Command = PcieReadConfig32 (0, 0, 0, 0x04);
     Command |= 0x0006;
