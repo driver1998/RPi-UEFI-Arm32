@@ -24,17 +24,31 @@ configuration reads.
 Reading the VL805 register block through the outbound window still returns zero.
 Every register involved reads back the intended value:
 
-    win0_lo    = 0xC0000000    PCI side base of the window
+    win0_lo    = 0xF8000000    PCI side base of the window
     base_limit = 0xC030C000    CPU side 0xC00..0xC03 MB, a 4 MB window
     misc_ctrl  = 0x78003480    SCB access enable, 128 B burst, SCB0 size 15 (1 GB)
-    BAR0       = 0xC0000004    64 bit memory BAR, address 0xC0000000
+    BAR0       = 0xF8000004    64 bit memory BAR, address 0xF8000000
     command    = 0x0006        memory space and bus master enabled
 
-    bridge memory base/limit = 0xC000 / 0xC030, covering the same range
+    bridge memory base/limit = 0xF800 / 0xFBF0, covering the same range
 
-The three ranges that have to agree, the window's PCI base, the device BAR and the
-bridge memory window, now all hold 0xC0000000, and the SCB decode size is set, so
-the obvious mismatches are gone.
+### The window probe, and what it rules out
+
+Writing 0x5A5A1234 through the CPU side of the window and reading it back returns
+0x5A5A1234, the access completes immediately, no fault is taken, and two
+neighbouring addresses read zero. The same behaviour appears whether the PCI side
+of the window is set to 0xF8000000 (the device tree value) or to an address of the
+port's own choosing, so the PCI side base is not what is wrong.
+
+That signature, writes absorbed and unwritten locations reading zero, is a default
+slave: the access is not matching an outbound window at all and is falling through
+to whatever sits behind the interconnect. It is not the device, because the xHCI's
+first register is read-only CAPLENGTH and HCIVERSION and a real device would not
+have accepted the write.
+
+So the remaining problem is entirely on the CPU side of the window: the root
+complex is not claiming 0xC0000000 even though WIN0_BASE_LIMIT and WIN0_BASE_HI
+read back the values the encoding says they should.
 
 ## The next experiment, and why it is the right one
 
