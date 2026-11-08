@@ -140,3 +140,14 @@ The interesting parts, in the order they were needed to reach BDS:
 
 The original licence and code of conduct from the ms-iot project apply; see
 [LICENSE.txt](LICENSE.txt) and [README.ms-iot.md](README.ms-iot.md).
+
+## LLM/AI usage
+
+As what can be seen in the commit history, this port is **mostly vibecoded**, using DeepSeek 4.1 Flash 1017. So use it at your own risk. 
+
+With that said, every changed here is tested, validated by a real human on real hardware.
+
+## Acknowledgment
+
+This port is based on the work of [mariobalanica](https://github.com/mariobalanica) at https://github.com/worproject/RPi-UEFI-Arm32/tree/rpi4-dirty-port/.
+
