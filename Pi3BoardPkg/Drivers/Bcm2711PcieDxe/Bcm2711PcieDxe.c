@@ -83,7 +83,7 @@
 
 #define PCIE_WINDOW_CPU_BASE                0xC0000000UL
 #define PCIE_WINDOW_CPU_END                 0xC03FFFFFUL
-#define PCIE_WINDOW_DEVICE_ADDR             0xC0000000UL
+#define PCIE_WINDOW_DEVICE_ADDR             0xF8000000UL
 #define  RGR1_INIT_MASK                     0x2
 #define  RGR1_INIT_SHIFT                    1
 #define  RGR1_PERST_MASK                    0x1
@@ -440,8 +440,8 @@ Bcm2711PcieInitialize (
     // PCI 0xF8000000..0xFBFFFFFF; on a 32 bit bridge both registers hold address
     // bits[31:20] in bits[15:4].
     //
-    PcieWriteConfig32 (0, 0, 0, 0x20, 0xC000);
-    PcieWriteConfig32 (0, 0, 0, 0x24, 0xC030);
+    PcieWriteConfig32 (0, 0, 0, 0x20, 0xF800);
+    PcieWriteConfig32 (0, 0, 0, 0x24, 0xFBF0);
 
     Command = PcieReadConfig32 (0, 0, 0, 0x04);
     Command |= 0x0006;
