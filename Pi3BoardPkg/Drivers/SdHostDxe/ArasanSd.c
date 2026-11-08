@@ -125,6 +125,22 @@
 #define SDHCI_CMD_INDEX_CHECK       (1U << 4)
 #define SDHCI_CMD_DATA_PRESENT      (1U << 5)
 
+//
+// SDHCI_TRANSFER_MODE bits
+//
+#define SDHCI_TM_BLOCK_COUNT_EN     (1U << 1)
+#define SDHCI_TM_READ               (1U << 3)
+#define SDHCI_TM_MULTI_BLOCK        (1U << 4)
+
+#define SDHCI_BLOCK_BYTE_LENGTH     512
+
+//
+// Block count programmed for a multi block transfer. MmcDxe caps its own
+// per-command block count and terminates the transfer with CMD12, so this only
+// has to be at least as large as the number of blocks it will actually consume.
+//
+#define ARASAN_SD_MULTI_BLOCK_COUNT 64
+
 #define ARASAN_SD_CMD_POLL_COUNT    1000000UL
 #define ARASAN_SD_DATA_POLL_COUNT   1000000UL
 
@@ -458,12 +474,44 @@ ArasanSendCommand (
     }
 
     //
-    // Write TRANSFER_MODE even for commands without data: the controller samples
-    // the whole transfer descriptor when COMMAND is written, and leaving the
-    // register at whatever the reset or a previous transfer left in it makes the
-    // command behaviour depend on history.
+    // Program the transfer descriptor before COMMAND is written, even for
+    // commands without data: the controller samples the whole descriptor when
+    // COMMAND is written, and leaving it at whatever the last transfer or the
+    // reset left behind makes command behaviour depend on history.
     //
-    MmioWrite16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE, 0x0000);
+    // MmcDxe sends CMD17/18/24 itself and then pumps the payload through
+    // ReadBlockData/WriteBlockData one block per call, so the block size and
+    // count have to be set up here rather than in the data callbacks.
+    //
+    if ((Index == 17) || (Index == 18) || (Index == 24) || (Index == 25)) {
+        BOOLEAN  IsRead     = (Index == 17) || (Index == 18);
+        BOOLEAN  IsMultiple = (Index == 18) || (Index == 25);
+        UINT16   TransferMode;
+        UINT16   BlockCount;
+
+        BlockCount   = IsMultiple ? ARASAN_SD_MULTI_BLOCK_COUNT : 1;
+        TransferMode = SDHCI_TM_BLOCK_COUNT_EN;
+        if (IsMultiple) {
+            TransferMode |= SDHCI_TM_MULTI_BLOCK;
+        }
+        if (IsRead) {
+            TransferMode |= SDHCI_TM_READ;
+        }
+
+        MmioWrite16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT, SDHCI_BLOCK_BYTE_LENGTH);
+        MmioWrite16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT + 2, BlockCount);
+        MmioWrite16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE, TransferMode);
+
+        Command |= SDHCI_CMD_DATA_PRESENT;
+
+        DEBUG ((
+            DEBUG_MMCHOST_SD,
+            "ArasanSd: cmd %d data transfer, mode=0x%04x count=%d\n",
+            Index, TransferMode, BlockCount));
+    } else {
+        MmioWrite16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE, 0x0000);
+    }
+
     MmioWrite16 (ARASAN_SD_BASE + SDHCI_COMMAND, Command);
 
     for (Spin = 0; Spin < ARASAN_SD_CMD_POLL_COUNT; Spin++) {
@@ -545,14 +593,63 @@ ArasanReadBlockData (
     OUT UINT32                  *Buffer
     )
 {
+    UINTN   Words;
+    UINTN   WordIndex;
+    UINTN   Spin;
+    UINT16  Status;
+
+    if (Buffer == NULL) {
+        return EFI_INVALID_PARAMETER;
+    }
+
     //
-    // Data transfers are the second milestone; the command layer is validated
-    // first so that a card that never answers cannot be confused with a broken
-    // data path.
+    // MmcDxe already sent CMD17/CMD18 and set the transfer descriptor up in
+    // ArasanSendCommand, so this only has to drain the buffer data port. The
+    // buffer is fed one block at a time; BUFFER_READ_READY stays asserted while
+    // the current block still has words left in it.
     //
-    DEBUG ((DEBUG_ERROR, "ArasanSd: ReadBlockData not implemented yet (LBA 0x%x, %d bytes)\n",
-            (UINT32)Lba, (UINT32)Length));
-    return EFI_UNSUPPORTED;
+    Words = Length / sizeof (UINT32);
+
+    for (WordIndex = 0; WordIndex < Words; WordIndex++) {
+        for (Spin = 0; Spin < ARASAN_SD_DATA_POLL_COUNT; Spin++) {
+            Status = MmioRead16 (ARASAN_SD_BASE + SDHCI_ERROR_INT_STATUS);
+            if (Status != 0) {
+                DEBUG ((
+                    DEBUG_ERROR,
+                    "ArasanSd: read error at word %d of LBA 0x%x, error=0x%04x\n",
+                    (UINT32)WordIndex, (UINT32)Lba, Status));
+                ArasanResetCmdLine ();
+                return EFI_DEVICE_ERROR;
+            }
+
+            if ((MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS) &
+                 SDHCI_INT_BUF_READ_READY) != 0) {
+                break;
+            }
+        }
+
+        if (Spin == ARASAN_SD_DATA_POLL_COUNT) {
+            DEBUG ((
+                DEBUG_ERROR,
+                "ArasanSd: read timed out at word %d of LBA 0x%x, normal=0x%04x\n",
+                (UINT32)WordIndex, (UINT32)Lba,
+                (UINT32)MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS)));
+            ArasanResetCmdLine ();
+            return EFI_TIMEOUT;
+        }
+
+        Buffer[WordIndex] = MmioRead32 (ARASAN_SD_BASE + SDHCI_BUFFER_DATA_PORT);
+    }
+
+    MmioWrite16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS,
+                 SDHCI_INT_BUF_READ_READY | SDHCI_INT_XFER_COMPLETE);
+
+    DEBUG ((
+        DEBUG_MMCHOST_SD,
+        "ArasanSd: read LBA 0x%x, %d bytes ok, first word 0x%08x\n",
+        (UINT32)Lba, (UINT32)Length, Buffer[0]));
+
+    return EFI_SUCCESS;
 }
 
 EFI_STATUS
