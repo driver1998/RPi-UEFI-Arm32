@@ -1,116 +1,101 @@
 # PCIe bring-up on BCM2711 (Raspberry Pi 4), ARM32 EDK2 port
 
-Status: **base address confirmed, reset sequence identified, not yet implemented.**
+Status: **root complex and link work, the device is visible on the bus, but its
+memory BAR cannot be read through the outbound window yet.**
 
 The goal is USB: the four USB-A ports are behind the VL805 xHCI controller, which
-is on PCIe, so keyboard input and USB storage both need the root complex running.
+is on PCIe, so keyboard input and USB storage both need this to work.
 
-## Addressing: 0xFD500000, and how the three read signatures differ
+## What works, verified on hardware
 
-`bcm2711.dtsi` wraps the peripheral nodes in an `scb` node:
+    rgr1 before             = 0x00000003   PERST# and bridge init both asserted
+    perst deasserted        rgr1 = 0x00000000
+    PHYLINKUP reached after 7 ms, PCIE_STATUS = 0x000000B0
+    PCIE_STATUS bits: 0x80 PCIE_PORT, 0x20 DL_ACTIVE, 0x10 PHYLINKUP
+    0:0.0 vendor=0x14E4 device=0x2711 class=0x060400   root complex
+    1:0.0 vendor=0x1106 device=0x3483 class=0x0C0330   VL805 xHCI controller
 
-```
-scb {
-        ranges = <0x0 0x7c000000  0x0 0xfc000000  0x03800000>,
-                 <0x6 0x00000000  0x6 0x00000000  0x40000000>;
+So: address mapping, reset release, link training, config space access and
+downstream bridge forwarding are all confirmed working. The VL805 answers
+configuration reads.
 
-        pcie0: pcie@7d500000 { reg = <0x0 0x7d500000 0x9310>; ... };
-};
-```
+## What does not work
 
-`pcie@7d500000` is inside `scb`, so it is translated by the first range:
+Reading the VL805 register block through the outbound window still returns zero.
+Every register involved reads back the intended value:
 
-```
-0x7c000000 -> 0xfc000000          (offset +0x80000000)
-0x7d500000 -> 0xfc000000 + (0x7d500000 - 0x7c000000) = 0xFD500000
-```
+    win0_lo    = 0xC0000000    PCI side base of the window
+    base_limit = 0xC030C000    CPU side 0xC00..0xC03 MB, a 4 MB window
+    misc_ctrl  = 0x78003480    SCB access enable, 128 B burst, SCB0 size 15 (1 GB)
+    BAR0       = 0xC0000004    64 bit memory BAR, address 0xC0000000
+    command    = 0x0006        memory space and bus master enabled
 
-**The root complex is at 0xFD500000.** Reading 0x7D500000 directly reaches nothing.
+    bridge memory base/limit = 0xC000 / 0xC030, covering the same range
 
-Two failure signatures, which must not be confused:
+The three ranges that have to agree, the window's PCI base, the device BAR and the
+bridge memory window, now all hold 0xC0000000, and the SCB decode size is set, so
+the obvious mismatches are gone.
 
-| reading | meaning |
+## The next experiment, and why it is the right one
+
+The read returns 0 without faulting, which is ambiguous: it is the value both of a
+decoded address whose target does not answer and of an address nothing decodes.
+Distinguish the two before changing anything else, because they lead in opposite
+directions:
+
+1. **Write a pattern to 0xC0000000 and read it back**, and time the access. A fast
+   read that returns the pattern means the address is decoded by the root complex
+   and the problem is downstream at the device. A read that returns zero slowly, or
+   returns the pattern quickly, means the access is not reaching the root complex
+   and the CPU side of the window is not being honoured.
+2. Read a known-undecoded address in the same session for comparison. Earlier
+   observations: 0x7D500000 returned 0xFFFFFFFF immediately (undecoded) and
+   0xFD500000 returned zero after about ten seconds (decoded, target silent). Any
+   third signature would be informative.
+
+If the access does reach the root complex, the remaining candidates are the window
+index (try window 1), the vendor specific endian register
+(PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1, the last step of brcm_pcie_setup), and
+whether the memory controller windows need to be programmed for non-prefetchable
+memory in the prefetchable base/limit registers instead of 0x20 and 0x24.
+
+## History: three failures with the same shape
+
+All three were silent, returning zero with no fault, no ASSERT and no log line,
+which is why the debug prints matter more than the changes do:
+
+| failure | symptom |
 |---|---|
-| `0x00000000` after about ten seconds | address is decoded, the target does not answer: AXI timeout |
-| `0xFFFFFFFF` immediately | nothing decoded at that address, interconnect returns all ones |
+| window PCI base did not match the BAR address | translation ended where no device lives |
+| bridge memory base/limit did not contain the window | the bridge dropped the cycle |
+| SCB decode size was zero | the root complex decoded nothing |
 
-So the observed `0` + 10 s at 0xFD500000 is the real signature and means the block
-is decoded but not running. An all-ones status must never be treated as a live
-link, which is why the driver now returns `EFI_NO_MAPPING` for it.
+The lesson worth keeping: print the values read back from hardware, never the
+value that was written, and never a literal in the format string. One build printed
+`-> pci 0xF8000000` from a string literal while the register held 0xC0000000, and
+that cost a round trip.
 
-The `ranges` of the pcie node itself also matter for the 32 bit port:
+## Reference material
 
-```
-ranges     = <0x02000000 0x0 0xf8000000  0x6 0x00000000  0x0 0x04000000>;
-dma-ranges = <0x02000000 0x0 0x00000000  0x0 0x00000000  0x0 0xc0000000>;
-```
+The Linux tree the numbers came from is at `linux/` in the workspace:
+`drivers/pci/controller/pcie-brcmstb.c` for the register offsets, the reset
+sequence and the outbound window encoding, and `include/linux/pci-ecam.h` for the
+config space index format.
 
-PCI memory 0xF8000000..0xFBFFFFFF maps to CPU **0x600000000**, which a 32 bit ARM
-cannot address. The port must choose its own 32 bit CPU side address for the
-outbound window. DMA to the first 3 GB of DRAM is fine as is.
+Key BCM2711 values:
 
-## The reset and power sequence Linux uses on BCM2711
-
-From `bcm2711_cfg` in `pcie-brcmstb.c`, BCM2711 uses the **generic** helpers:
-
-```
-.perst_set          = brcm_pcie_perst_set_generic,
-.bridge_sw_init_set = brcm_pcie_bridge_sw_init_set_generic,
-.num_inbound_wins   = 3,
-```
-
-and both helpers operate on the same register, `PCIE_RGR1_SW_INIT_1`, whose offset
-comes from `pcie_offsets[RGR1_SW_INIT_1]`:
-
-```
-#define RGR1_SW_INIT_1_INIT_GENERIC_MASK   0x2
-#define RGR1_SW_INIT_1_INIT_GENERIC_SHIFT  0x1
-```
-
-- `bridge_sw_init_set(val)`: clear mask `0x2`, insert `val << 1`
-- `perst_set(val)`: insert `val` at `PCIE_RGR1_SW_INIT_1_PERST_MASK`
-
-`brcm_pcie_setup()` then runs, in order:
-
-1. `bridge_sw_init_set(1)` - hold the bridge in reset
-2. `perst_set(1)` - assert PERST# (BCM2711 only)
-3. sleep 100..200 us
-4. `bridge_sw_init_set(0)` - release the bridge
-5. read `HARD_DEBUG`, clear `SERDES_IDDQ` (0x08000000), write back
-6. sleep 100..200 us
-7. `MISC_CTRL`: SCB_ACCESS_EN=1, CFG_READ_UR_MODE=1, MAX_BURST_SIZE=0 (128 B for
-   BCM2711), RCB_MPS_MODE=1, RCB_64B_MODE=1
-8. inbound windows (3 of them), RC mode check, SCB sizes from memory controller size
-9. L0s and link width in `PCIE_RC_CFG_PRIV1_LINK_CAPABILITY`
-10. class code 0x060400 in `PCIE_RC_CFG_PRIV1_ID_VAL3`
-11. outbound windows
-12. endian mode in `PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1`
-
-No clock or reset controller is needed: the DT declares none for this node and
-`brcm_pcie_probe` only takes them optionally, so the firmware leaves the PCIe clock
-running. An earlier conclusion in this branch that the firmware powers PCIe down,
-and the mailbox clock hunt that followed, were both wrong and are superseded here.
-
-## Still to look up in the local linux tree
-
-- `pcie_offsets[RGR1_SW_INIT_1]` - the register offset for BCM2711
-- `RGR1_SW_INIT_1_PERST_MASK` - the PERST bit inside that register
-
-Both are in `drivers/pci/controller/pcie-brcmstb.c`; grep for `pcie_offsets` and
-`RGR1_SW_INIT_1_PERST_MASK`.
-
-## Remaining work after the reset sequence
-
-1. Wait for `PCIE_STATUS.PHYLINK_UP`, then `.DL_ACTIVE` (0x4068).
-2. Configure RC BARs and UBUS remaps for config space, plus the outbound window
-   with a **32 bit** CPU side address of our choosing.
-3. Reprogram the VL805 BAR out of `0x6_00000000` into that window.
-4. Implement `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`. This tree has no producer of that
-   protocol at all, so it is new code, not configuration.
-5. Then the existing drivers: `PciBusDxe`, `XhciDxe`, `UsbBusDxe`, `UsbKbDxe`.
+- root complex at **0xFD500000**: `scb` in bcm2711.dtsi maps 0x7c000000 to
+  0xfc000000, so pcie@7d500000 lands there
+- `PCIE_RGR1_SW_INIT_1` = 0x9210, bridge init mask 0x2 shift 1, PERST# mask 0x1
+- `PCIE_MISC_MISC_CTRL` = 0x4008, `HARD_DEBUG` = 0x4204 (SERDES IDDQ 0x08000000)
+- `PCIE_MEM_WIN0_LO/HI` = 0x400C / 0x4010, `WIN0_BASE_LIMIT` = 0x4070 with the CPU
+  base in bits 15:4 and limit in bits 31:20, both in megabytes
+- `EXT_CFG_INDEX` = 0x9000, `EXT_CFG_DATA` = 0x8000, index is
+  `bus << 20 | devfn << 12 | (where & 0xfff)`
 
 ## Files
 
-- `Pi3BoardPkg/Drivers/Bcm2711PcieDxe/` - probe, plus the start of bring-up
-- `Pi2BoardPkg/Library/Pi2BoardLib/Pi2BoardMem.c` - maps
-  `0xFC000000..0xFDFFFFFF` as device memory so the root complex is reachable
+- `Pi3BoardPkg/Drivers/Bcm2711PcieDxe/` - bring-up, config space, window and BAR
+  assignment
+- `Pi2BoardPkg/Library/Pi2BoardLib/Pi2BoardMem.c` - maps 0xFC000000 (root complex)
+  and 0xC0000000 (outbound window) as device memory
