@@ -50,12 +50,13 @@ So the remaining problem is entirely on the CPU side of the window: the root
 complex is not claiming 0xC0000000 even though WIN0_BASE_LIMIT and WIN0_BASE_HI
 read back the values the encoding says they should.
 
-## The most likely blocker: the window may have to live above 4 GB
+## The blocker: an 8 GB board leaves no free 32 bit CPU address
 
 Matching every register to a dump taken from the same controller under Linux did
-not fix it. That dump is worth keeping:
+not fix it. The dump is worth keeping, and the 32 bit and 64 bit kernels produce
+identical values:
 
-    Linux, with PCIe working
+    Linux, with PCIe working (both armv7l and aarch64)
     WIN0_LO         = 0xC0000000
     WIN0_HI         = 0x00000000
     WIN0_BASE_LIMIT = 0x3FF00000     base_mb 0, limit_mb 0x3FF
@@ -64,28 +65,53 @@ not fix it. That dump is worth keeping:
     MISC_CTRL       = 0x88003480     SCB0 size 17, a 4 GB decode range
     PCIE_STATUS     = 0x000000b0
 
-Combining the base and hi fields, Linux places the **CPU side** of the window at
-`0x6_00000000`, above 4 GB, and the PCI side at 0xC0000000. This port can only try
-CPU side addresses below 4 GB, because `ArmConfigureMmu` in this tree builds ARMv7
-**short descriptor** translation tables, which encode a 32 bit physical address
-only.
+Combining base and hi, Linux places the **CPU side** of the window at
+`0x6_00000000`, above 4 GB. Every register this port programs now carries exactly
+the value a working system uses, with that one exception.
 
-A 32 bit Raspberry Pi OS does use PCIe on this board, but it enables **LPAE**, so
-its MMU can express `0x6_00000000`. Our MMU cannot.
+The reason Linux has no better option is the board itself. A BCM2711 with more than
+4 GB of RAM exposes the extra memory inside the 32 bit address space:
 
-That makes two possibilities, and they need quite different work:
+    0x00000000 - 0x3B3FFFFF   low 1 GB
+    0x40000000 - 0xFBFFFFFF   the rest of DRAM, aliased into 32 bits
 
-1. **The root complex only accepts a window CPU address at 4 GB or above.** Then
-   the port needs long descriptor / LPAE translation, a substantial change to
-   `ArmPkg/Library/ArmLib/ArmV7/ArmV7Mmu.c` and to every place that assumes a 32
-   bit physical address. Worth confirming before starting.
-2. **A below-4 GB window is acceptable and something else is still unset.** Then a
-   further comparison against Linux is the way to find it, for instance with a
-   32 bit kernel where the window necessarily sits below 4 GB.
+Upstream says so explicitly in
+`Platform/RaspberryPi/Library/PlatformLib/RaspberryPiMem.c`. On an 8 GB board the
+whole 32 bit range below the peripheral window at 0xFC000000 is therefore DRAM, and
+there is no free CPU address to give a PCIe outbound window.
 
-Distinguishing these two is the next thing to do, before writing more code. Every
-attempt so far that changed a register value was a guess, and six of them in a row
-did not move the failure.
+That explains every observation. Writes through the window are retained and read
+back because they are ordinary DRAM writes, and the device never sees them because
+DRAM decode in the interconnect takes priority over the PCIe outbound window.
+Moving the window from 0xC0000000 to 0x40000000 changed nothing for the same reason.
+
+So the window CPU address has to be at 4 GB or above, which this port cannot
+express: `ArmConfigureMmu` builds ARMv7 **short descriptor** tables, and
+`ARM_MEMORY_REGION_DESCRIPTOR` carries a 32 bit physical base. A 32 bit Raspberry Pi
+OS manages because it enables **LPAE**.
+
+## Status: complete up to a mapping capability, not a configuration
+
+The PCIe driver is not at fault. Root complex wake-up, link training, config space,
+bridge forwarding and device enumeration all work and are verified on hardware, and
+every window register matches a working system. What is missing is the ability to
+address a physical address above 4 GB.
+
+Two ways forward:
+
+1. **Long descriptor / LPAE translation.** The correct fix for an 8 GB board, and a
+   large change: `ArmV7Mmu.c` rewritten for long descriptors, `TTBCR.EAE` and
+   `MAIR0/MAIR1` replacing `PRRR/NMRR`, and `ARM_MEMORY_REGION_DESCRIPTOR` widened to
+   a 40 bit physical base, which ripples into every platform's PCDs and into the
+   memory HOB construction. Larger than the PCIe driver waiting behind it.
+2. **Confirm on a 1 GB board.** With 1 GB, 0x40000000..0xFBFFFFFF really is free, so
+   this driver should work unchanged with the window CPU base at 0x40000000. One
+   flash would prove the analysis. No 1 GB board is available at the moment, so this
+   is untested.
+
+Until one of those happens, PCIe and therefore USB stay incomplete on this port, and
+no further register value is worth trying: the failure is a mapping capability, not
+a configuration.
 
 ## The next experiment, and why it is the right one
 
