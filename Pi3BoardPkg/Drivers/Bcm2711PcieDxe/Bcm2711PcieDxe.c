@@ -35,10 +35,26 @@
 #define  MISC_CTRL_SCB0_SIZE_MASK           0xF8000000
 
 #define PCIE_MISC_PCIE_STATUS               0x4068
-#define  PCIE_STATUS_RDLINK_UP              (1U << 4)
-#define  PCIE_STATUS_LINK_UP                (1U << 5)
-#define  PCIE_STATUS_PHYLINK_UP             (1U << 6)
-#define  PCIE_STATUS_DL_ACTIVE              (1U << 7)
+//
+// Bit positions from pcie-brcmstb.c, which are not what a first guess suggests:
+// bit 7 is the RC port indicator, bit 6 LINK_IN_L23, bit 5 DL_ACTIVE and bit 4
+// PHYLINKUP. Getting these wrong makes an RC-mode block with an untrained link
+// look like a live one, because the port bit then reads as "link active".
+//
+#define  PCIE_STATUS_PCIE_PORT              (1U << 7)
+#define  PCIE_STATUS_LINK_IN_L23            (1U << 6)
+#define  PCIE_STATUS_DL_ACTIVE              (1U << 5)
+#define  PCIE_STATUS_PHYLINKUP              (1U << 4)
+
+//
+// PCIE_MISC_MISC_CTRL fields, again straight from the Linux driver.
+//
+#define PCIE_MISC_MISC_CTRL                 0x4008
+#define  MISC_CTRL_RCB_64B_MODE             (1U << 7)
+#define  MISC_CTRL_RCB_MPS_MODE             (1U << 10)
+#define  MISC_CTRL_SCB_ACCESS_EN            (1U << 12)
+#define  MISC_CTRL_CFG_READ_UR_MODE         (1U << 13)
+#define  MISC_CTRL_MAX_BURST_SIZE_MASK      0x00300000
 
 #define PCIE_MISC_HARD_PCIE_HARD_DEBUG      0x4204
 #define  HARD_DEBUG_SERDES_IDDQ             0x08000000
@@ -98,9 +114,9 @@ PrintLinkStatus (
     DEBUG_INIT,
     "Bcm2711Pcie: link (%a): rdl=%d link=%d phy=%d dl_active=%d, raw=0x%08x\n",
     When,
-    (Status & PCIE_STATUS_RDLINK_UP)  ? 1 : 0,
-    (Status & PCIE_STATUS_LINK_UP)    ? 1 : 0,
-    (Status & PCIE_STATUS_PHYLINK_UP) ? 1 : 0,
+    (Status & PCIE_STATUS_PHYLINKUP) ? 1 : 0,
+    (Status & PCIE_STATUS_LINK_IN_L23)    ? 1 : 0,
+    (Status & PCIE_STATUS_PHYLINKUP) ? 1 : 0,
     (Status & PCIE_STATUS_DL_ACTIVE)  ? 1 : 0,
     Status));
 }
@@ -125,6 +141,7 @@ Bcm2711PcieInitialize (
   UINT32  MiscCtrl;
   UINT32  Status;
   UINT32  Reset;
+  UINTN   Spin;
 
   DEBUG ((DEBUG_INIT, "Bcm2711Pcie: bring-up starting at 0x%08x\n", (UINT32)PCIE_RC_BASE));
 
@@ -179,20 +196,48 @@ Bcm2711PcieInitialize (
   gBS->Stall (200);
 
   //
-  // Enable SCB access, which is what makes the config space windows usable, and
-  // report the size field so the next stage knows what it is working with.
+  // The rest of the MISC_CTRL setup from brcm_pcie_setup(): SCB access enable,
+  // unrestricted config reads, a 128 byte max burst on BCM2711, and the RCB
+  // modes. All masks come from the Linux driver.
   //
   MiscCtrl |= MISC_CTRL_SCB_ACCESS_EN;
+  MiscCtrl |= MISC_CTRL_CFG_READ_UR_MODE;
+  MiscCtrl |= MISC_CTRL_RCB_MPS_MODE;
+  MiscCtrl |= MISC_CTRL_RCB_64B_MODE;
+  MiscCtrl &= ~MISC_CTRL_MAX_BURST_SIZE_MASK;      // 0 = 128 bytes on BCM2711
   MiscCtrl = PcieWrite (PCIE_MISC_MISC_CTRL, MiscCtrl);
 
   DEBUG ((
     DEBUG_INIT,
-    "Bcm2711Pcie: after: hard_debug=0x%08x misc_ctrl=0x%08x (scb_en=%d, scb0_size=0x%x)\n",
+    "Bcm2711Pcie: after: hard_debug=0x%08x misc_ctrl=0x%08x (scb_en=%d)\n",
     HardDebug, MiscCtrl,
-    (MiscCtrl & MISC_CTRL_SCB_ACCESS_EN) ? 1 : 0,
-    (MiscCtrl & MISC_CTRL_SCB0_SIZE_MASK) >> 27));
+    (MiscCtrl & MISC_CTRL_SCB_ACCESS_EN) ? 1 : 0));
 
-  Status = PcieRead (PCIE_MISC_PCIE_STATUS);
+  //
+  // Wait for the PHY link, then for the data link. The link comes up in stages:
+  // DL_ACTIVE without PHYLINKUP first would mean something is wrong.
+  //
+  for (Spin = 0; Spin < 200; Spin++) {
+    Status = PcieRead (PCIE_MISC_PCIE_STATUS);
+    if ((Status & PCIE_STATUS_PHYLINKUP) != 0) {
+      break;
+    }
+    gBS->Stall (1000);
+  }
+  DEBUG ((
+    DEBUG_INIT,
+    "Bcm2711Pcie: PHYLINKUP %a after %d ms, status=0x%08x\n",
+    (Status & PCIE_STATUS_PHYLINKUP) ? "reached" : "never reached",
+    (UINT32)Spin, Status));
+
+  for (Spin = 0; Spin < 200; Spin++) {
+    Status = PcieRead (PCIE_MISC_PCIE_STATUS);
+    if ((Status & PCIE_STATUS_DL_ACTIVE) != 0) {
+      break;
+    }
+    gBS->Stall (1000);
+  }
+
   PrintLinkStatus ("after", Status);
 
   //
