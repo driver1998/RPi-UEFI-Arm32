@@ -188,6 +188,22 @@ Bcm2711PcieInitialize (
   Status = PcieRead (PCIE_MISC_PCIE_STATUS);
   PrintLinkStatus ("after", Status);
 
+  //
+  // All ones is not a link, it is an undecoded address: an interconnect answers a
+  // read from an address that no device claims with 0xFFFFFFFF, and it does so
+  // quickly. A root complex that exists but is powered down answers with zeros
+  // after the AXI timeout instead. Check this explicitly, otherwise every bit of
+  // PCIE_STATUS reads as set and the driver would claim the data link is active.
+  //
+  if (Status == 0xFFFFFFFF) {
+    DEBUG ((
+      DEBUG_ERROR,
+      "Bcm2711Pcie: PCIE_STATUS reads all ones, so no device is decoded at "
+      "0x%08x; the base address is wrong\n",
+      (UINT32)PCIE_RC_BASE));
+    return EFI_NO_MAPPING;
+  }
+
   if ((Status & PCIE_STATUS_DL_ACTIVE) != 0) {
     DEBUG ((DEBUG_INIT, "Bcm2711Pcie: data link is active\n"));
     return EFI_SUCCESS;
