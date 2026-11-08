@@ -144,7 +144,8 @@
 #define ARASAN_SD_CMD_POLL_COUNT    1000000UL
 #define ARASAN_SD_DATA_POLL_COUNT   1000000UL
 
-static BOOLEAN  mArasanInitialized = FALSE;
+static BOOLEAN  mArasanInitialized     = FALSE;
+static BOOLEAN  mArasanAtTransferClock = FALSE;
 
 /**
   Reset the command (and data) line after a failed command.
@@ -391,7 +392,8 @@ ArasanSdInitialize (
         (UINT32)MmioRead8 (ARASAN_SD_BASE + SDHCI_POWER_CONTROL),
         (UINT32)MmioRead8 (ARASAN_SD_BASE + SDHCI_SOFTWARE_RESET)));
 
-    mArasanInitialized = TRUE;
+    mArasanInitialized     = TRUE;
+    mArasanAtTransferClock = FALSE;
     return EFI_SUCCESS;
 }
 
@@ -415,11 +417,19 @@ ArasanNotifyState (
 
     case MmcTransferState:
         //
-        // Card is identified and addressed: move to the transfer clock. Stay at
-        // 3.3 V signalling, so the rate is capped well below high speed.
+        // Card is identified and addressed: move to the transfer clock, once.
         //
-        ArasanSetSdClock (ARASAN_SD_TRANSFER_CLOCK_HZ);
-        DEBUG ((DEBUG_INIT, "ArasanSd: transfer clock %d Hz\n", (UINT32)ARASAN_SD_TRANSFER_CLOCK_HZ));
+        // MmcDxe raises this notification repeatedly, and ArasanSetSdClock()
+        // disables the card clock before reprogramming the divider and enables it
+        // again afterwards. Doing that again in the middle of a data transfer
+        // would abort the very transfer being set up, so only switch when the
+        // clock is not already at the transfer rate.
+        //
+        if (!mArasanAtTransferClock) {
+            ArasanSetSdClock (ARASAN_SD_TRANSFER_CLOCK_HZ);
+            mArasanAtTransferClock = TRUE;
+            DEBUG ((DEBUG_INIT, "ArasanSd: transfer clock %d Hz\n", (UINT32)ARASAN_SD_TRANSFER_CLOCK_HZ));
+        }
         return EFI_SUCCESS;
 
     default:
