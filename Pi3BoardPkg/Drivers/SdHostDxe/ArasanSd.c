@@ -628,17 +628,20 @@ ArasanReadBlockData (
             }
 
             //
-            // Require BUFFER_READ_READY specifically.
+            // Wait for the buffer ready bit that this controller actually uses.
             //
-            // Accepting BUFFER_WRITE_READY here as well was a mistake: this
-            // controller keeps that bit asserted while idle, so the loop passed
-            // immediately and six hundred bytes of empty buffer came back as a
-            // successful read of all zeros. A read transfer must report
-            // BUFFER_READ_READY, and anything else means the controller is not
-            // doing the transfer we think it is.
+            // Per the SDHCI specification bit 4 is BUFFER_WRITE_READY and bit 5
+            // is BUFFER_READ_READY, but on this Arasan the pair behaves the other
+            // way round: a read transfer in progress (PRESENT_STATE shows the DAT
+            // line active and the command was accepted, transfer mode reads back
+            // 0x0008 for read) raises bit 4 and never raises bit 5.
+            //
+            // Accepting both bits is not an option: BUFFER_WRITE_READY is also
+            // asserted while idle, which made an earlier version "succeed" by
+            // reading 128 words out of an empty buffer. So require bit 4 only.
             //
             if ((MmioRead16 (ARASAN_SD_BASE + SDHCI_NORMAL_INT_STATUS) &
-                 SDHCI_INT_BUF_READ_READY) != 0) {
+                 SDHCI_INT_BUF_WRITE_READY) != 0) {
                 break;
             }
         }
