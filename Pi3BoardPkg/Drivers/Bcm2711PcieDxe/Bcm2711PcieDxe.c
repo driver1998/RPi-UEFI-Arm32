@@ -418,6 +418,18 @@ Bcm2711PcieInitialize (
     //   0x04: memory space enable + bus master enable
     //
     PcieWriteConfig32 (0, 0, 0, 0x18, 0x00010100);
+
+    //
+    // The bridge also filters memory cycles by its memory base and limit
+    // registers. With both at zero every access through the window is dropped,
+    // which shows up exactly as it did: the device BAR reads back a sensible
+    // address while reading that address returns zero. Cover
+    // PCI 0xF8000000..0xFBFFFFFF; on a 32 bit bridge both registers hold address
+    // bits[31:20] in bits[15:4].
+    //
+    PcieWriteConfig32 (0, 0, 0, 0x20, 0xF800);
+    PcieWriteConfig32 (0, 0, 0, 0x24, 0xFBF0);
+
     Command = PcieReadConfig32 (0, 0, 0, 0x04);
     Command |= 0x0006;
     PcieWriteConfig32 (0, 0, 0, 0x04, Command);
