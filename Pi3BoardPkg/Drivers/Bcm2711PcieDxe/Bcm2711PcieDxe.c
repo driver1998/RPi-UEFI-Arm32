@@ -409,6 +409,8 @@ Bcm2711PcieInitialize (
     UINT32  Command;
     UINT32  Window;
     UINT32  Index;
+    UINT32  Before;
+    UINT32  Written;
 
     DEBUG ((DEBUG_INIT, "Bcm2711Pcie: data link is active\n"));
 
@@ -517,6 +519,30 @@ Bcm2711PcieInitialize (
       "Bcm2711Pcie: xHCI CAPLENGTH/HCIVERSION at 0x%08x = 0x%08x\n",
       (UINT32)PCIE_WINDOW_DEVICE_ADDR,
       MmioRead32 (PCIE_WINDOW_DEVICE_ADDR)));
+
+    //
+    // Distinguish the two explanations for a zero read, which need opposite
+    // fixes: "the address is decoded but the device does not answer" versus "the
+    // address is not decoded at all". Write a pattern and read it back. A decoded
+    // window returns the pattern; an address nothing decodes returns zero again.
+    // Watch the log speed as well: accesses that go nowhere are slow, a decoded
+    // access is immediate.
+    //
+    Before  = MmioRead32 (PCIE_WINDOW_DEVICE_ADDR);
+    MmioWrite32 (PCIE_WINDOW_DEVICE_ADDR, 0x5A5A1234);
+    Written = MmioRead32 (PCIE_WINDOW_DEVICE_ADDR);
+    MmioWrite32 (PCIE_WINDOW_DEVICE_ADDR, Before);
+
+    DEBUG ((
+      DEBUG_INIT,
+      "Bcm2711Pcie: window probe: before=0x%08x, wrote 0x5a5a1234, read back 0x%08x\n",
+      Before, Written));
+
+    DEBUG ((
+      DEBUG_INIT,
+      "Bcm2711Pcie: window probe: +4 = 0x%08x, +0x100 = 0x%08x\n",
+      MmioRead32 (PCIE_WINDOW_DEVICE_ADDR + 4),
+      MmioRead32 (PCIE_WINDOW_DEVICE_ADDR + 0x100)));
 
     //
     PciePrintDevice (1, 0, 0);
