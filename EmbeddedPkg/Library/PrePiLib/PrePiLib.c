@@ -111,22 +111,31 @@ LoadDxeCoreFromFfsFile (
   VOID                    *Hob;
   EFI_FV_FILE_INFO        FvFileInfo;
 
+  DEBUG ((DEBUG_INIT, "  LoadDxeCoreFromFfsFile: FfsFindSectionData\n"));
   Status = FfsFindSectionData (EFI_SECTION_PE32, FileHandle, &PeCoffImage);
   if (EFI_ERROR  (Status)) {
     return Status;
   }
+  DEBUG ((DEBUG_INIT, "  LoadDxeCoreFromFfsFile: PE32 section at 0x%08x\n", (UINT32)(UINTN)PeCoffImage));
 
 
+  DEBUG ((DEBUG_INIT, "  LoadDxeCoreFromFfsFile: LoadPeCoffImage, start\n"));
   Status = LoadPeCoffImage (PeCoffImage, &ImageAddress, &ImageSize, &EntryPoint);
 // For NT32 Debug  Status = SecWinNtPeiLoadFile (PeCoffImage, &ImageAddress, &ImageSize, &EntryPoint);
+  DEBUG ((
+    DEBUG_INIT,
+    "  LoadDxeCoreFromFfsFile: LoadPeCoffImage returned 0x%x, image 0x%08x size 0x%x entry 0x%08x\n",
+    Status, (UINT32)ImageAddress, (UINT32)ImageSize, (UINT32)EntryPoint));
   ASSERT_EFI_ERROR (Status);
 
   //
   // Extract the DxeCore GUID file name.
   //
+  DEBUG ((DEBUG_INIT, "  LoadDxeCoreFromFfsFile: FfsGetFileInfo\n"));
   Status = FfsGetFileInfo (FileHandle, &FvFileInfo);
   ASSERT_EFI_ERROR (Status);
 
+  DEBUG ((DEBUG_INIT, "  LoadDxeCoreFromFfsFile: BuildModuleHob\n"));
   BuildModuleHob (&FvFileInfo.FileName, (EFI_PHYSICAL_ADDRESS)(UINTN)ImageAddress, EFI_SIZE_TO_PAGES ((UINT32) ImageSize) * EFI_PAGE_SIZE, EntryPoint);
 
   DEBUG ((EFI_D_INFO | EFI_D_LOAD, "Loading DxeCore at 0x%10p EntryPoint=0x%10p\n", (VOID *)(UINTN)ImageAddress, (VOID *)(UINTN)EntryPoint));
