@@ -32,7 +32,7 @@
 // moment SCTLR.I is set (see the comment in ArmConfigureMmu()), so it is left
 // disabled for now: running with I=0 is functionally correct, only slower.
 //
-#define ENABLE_INSTRUCTION_CACHE   1
+#define ENABLE_INSTRUCTION_CACHE   0
 
 //
 // Set to 1 to enable the data cache on top of the MMU.
