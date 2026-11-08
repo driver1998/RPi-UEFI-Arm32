@@ -710,9 +710,10 @@ ArasanReadBlockData (
         if (Error != 0) {
             DEBUG ((
                 DEBUG_ERROR,
-                "ArasanSd: read error at LBA 0x%x, error=0x%04x present=0x%08x\n",
+                "ArasanSd: read error at LBA 0x%x, error=0x%04x present=0x%08x resp0=0x%08x\n",
                 (UINT32)Lba, Error,
-                MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE)));
+                MmioRead32 (ARASAN_SD_BASE + SDHCI_PRESENT_STATE),
+                MmioRead32 (ARASAN_SD_BASE + SDHCI_RESPONSE_0)));
             ArasanResetCmdLine ();
             return EFI_DEVICE_ERROR;
         }
