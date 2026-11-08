@@ -185,6 +185,7 @@ PrePiMain (
   SetBootMode (ArmPlatformGetBootMode ());
 
   // Initialize Platform HOBs (CpuHob and FvHob)
+  DEBUG ((DEBUG_INIT, " PlatformPeim\n"));
   Status = PlatformPeim ();
   ASSERT_EFI_ERROR (Status);
 
@@ -192,11 +193,15 @@ PrePiMain (
   PERF_START (NULL, "PEI", NULL, StartTimeStamp);
 
   // SEC phase needs to run library constructors by hand.
+  DEBUG ((DEBUG_INIT, " ExtractGuidedSectionLibConstructor\n"));
   ExtractGuidedSectionLibConstructor ();
+  DEBUG ((DEBUG_INIT, " LzmaDecompressLibConstructor\n"));
   LzmaDecompressLibConstructor ();
 
   // Build HOBs to pass up our version of stuff the DXE Core needs to save space
+  DEBUG ((DEBUG_INIT, " BuildPeCoffLoaderHob\n"));
   BuildPeCoffLoaderHob ();
+  DEBUG ((DEBUG_INIT, " BuildExtractSectionHob\n"));
   BuildExtractSectionHob (
     &gLzmaCustomDecompressGuid,
     LzmaGuidedSectionGetInfo,
@@ -204,10 +209,13 @@ PrePiMain (
     );
 
   // Assume the FV that contains the SEC (our code) also contains a compressed FV.
+  DEBUG ((DEBUG_INIT, " DecompressFirstFv, start\n"));
   Status = DecompressFirstFv ();
+  DEBUG ((DEBUG_INIT, " DecompressFirstFv, returned 0x%x\n", Status));
   ASSERT_EFI_ERROR (Status);
 
   // Load the DXE Core and transfer control to it
+  DEBUG ((DEBUG_INIT, " LoadDxeCoreFromFv\n"));
   Status = LoadDxeCoreFromFv (NULL, 0);
   ASSERT_EFI_ERROR (Status);
 }

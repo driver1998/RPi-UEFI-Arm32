@@ -32,7 +32,7 @@
 // moment SCTLR.I is set (see the comment in ArmConfigureMmu()), so it is left
 // disabled for now: running with I=0 is functionally correct, only slower.
 //
-#define ENABLE_INSTRUCTION_CACHE   0
+#define ENABLE_INSTRUCTION_CACHE   1
 
 //
 // Set to 1 to enable the data cache on top of the MMU.
@@ -49,7 +49,7 @@
 // The data cache is therefore left off for now so that console work runs on a
 // known-good base; the Write-Through configuration is kept in Pi2Board.h.
 //
-#define ENABLE_DATA_CACHE          0
+#define ENABLE_DATA_CACHE          1
 
 UINT32
 ConvertSectionAttributesToPageAttributes (
