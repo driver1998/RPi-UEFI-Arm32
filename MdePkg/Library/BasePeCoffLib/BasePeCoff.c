@@ -1310,6 +1310,12 @@ PeCoffLoaderLoadImage (
   //
   // Read the entire PE/COFF or TE header into memory
   //
+  DEBUG ((
+    DEBUG_INIT,
+    "     PeCoffLoaderLoadImage: reading headers, SizeOfHeaders 0x%x, hdr offset 0x%x, te %d\n",
+    (UINT32)ImageContext->SizeOfHeaders,
+    (UINT32)ImageContext->PeCoffHeaderOffset,
+    (UINT32)ImageContext->IsTeImage));
   if (!(ImageContext->IsTeImage)) {
     Status = ImageContext->ImageRead (
                             ImageContext->Handle,
