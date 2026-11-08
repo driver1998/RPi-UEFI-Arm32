@@ -1,84 +1,116 @@
 # PCIe bring-up on BCM2711 (Raspberry Pi 4), ARM32 EDK2 port
 
-Status: **blocked on enabling the PCIe clock.** Everything below is what has been
-established on hardware, so the next attempt starts from facts rather than
-assumptions.
+Status: **base address confirmed, reset sequence identified, not yet implemented.**
 
 The goal is USB: the four USB-A ports are behind the VL805 xHCI controller, which
 is on PCIe, so keyboard input and USB storage both need the root complex running.
 
-## Facts established on the board
+## Addressing: 0xFD500000, and how the three read signatures differ
 
-1. The register block lives at `0xFD500000` (`pcie@7d500000` in the DT, high
-   peripheral alias). It was not mapped by this port at all; the very first read
-   took a translation fault. `Pi2BoardMem.c` now maps
-   `0xFC000000..0xFDFFFFFF` as device memory, before the SoC region because the
-   short descriptor fill walks the table in order.
+`bcm2711.dtsi` wraps the peripheral nodes in an `scb` node:
 
-2. With the mapping in place, every root complex register reads `0x00000000` and
-   **each access costs about ten seconds**. That is the AXI timeout of an
-   unclocked block, and it applies to writes as well: a build that tried to clear
-   `SERDES_IDDQ` stalled in the write.
+```
+scb {
+        ranges = <0x0 0x7c000000  0x0 0xfc000000  0x03800000>,
+                 <0x6 0x00000000  0x6 0x00000000  0x40000000>;
 
-3. Writes to an unclocked block cannot take effect, so the driver now skips them
-   entirely when the three probe registers read zero.
+        pcie0: pcie@7d500000 { reg = <0x0 0x7d500000 0x9310>; ... };
+};
+```
 
-4. **There is no PCIe entry in the Pi firmware mailbox clock list.** Querying clock
-   ids 1..15 with the property interface returns:
+`pcie@7d500000` is inside `scb`, so it is translated by the first range:
 
-   | id | rate | clock |
-   |----|------|-------|
-   | 1 | 250 MHz | EMMC |
-   | 2 | 48 MHz | UART |
-   | 3 | 1.8 GHz | ARM |
-   | 4 | 500 MHz | CORE |
-   | 5 | 500 MHz | V3D |
-   | 6 | 250 MHz | H264 |
-   | 7 | 250 MHz | ISP |
-   | 8 | 400 MHz | SDRAM |
-   | 9, 10, 13, 15 | 0 | unused |
-   | 11 | 250 MHz | HEVC |
-   | 12 | 100 MHz | EMMC2 |
-   | 14 | 75 MHz | GENET |
+```
+0x7c000000 -> 0xfc000000          (offset +0x80000000)
+0x7d500000 -> 0xfc000000 + (0x7d500000 - 0x7c000000) = 0xFD500000
+```
 
-   So the PCIe clock cannot be requested the way the UART and eMMC2 clocks were.
+**The root complex is at 0xFD500000.** Reading 0x7D500000 directly reaches nothing.
 
-## Consequence and next step
+Two failure signatures, which must not be confused:
 
-The BCM2711 clock manager sits at `0xFE101000` and is directly accessible from the
-ARM, so the PCIe clock has to be enabled by writing the CM registers rather than
-going through the mailbox.
+| reading | meaning |
+|---|---|
+| `0x00000000` after about ten seconds | address is decoded, the target does not answer: AXI timeout |
+| `0xFFFFFFFF` immediately | nothing decoded at that address, interconnect returns all ones |
 
-**Do not guess the `CM_PCIE` register offset.** Writing the wrong clock register
-can disturb an unrelated part of the SoC. Get the offset from the BCM2711 ARM
-Peripherals datasheet clock manager section, or from the Linux `clk-bcm2835`
-driver's clock table for BCM2711, before touching it.
+So the observed `0` + 10 s at 0xFD500000 is the real signature and means the block
+is decoded but not running. An all-ones status must never be treated as a live
+link, which is why the driver now returns `EFI_NO_MAPPING` for it.
 
-Once the clock is on, the probe should complete instantly with non-zero values
-instead of taking ten seconds per read; that is the signal to watch.
+The `ranges` of the pcie node itself also matter for the 32 bit port:
 
-## Remaining work after the clock
+```
+ranges     = <0x02000000 0x0 0xf8000000  0x6 0x00000000  0x0 0x04000000>;
+dma-ranges = <0x02000000 0x0 0x00000000  0x0 0x00000000  0x0 0xc0000000>;
+```
 
-1. SERDES out of IDDQ, then the MDIO write table that configures the SERDES and
-   PLL. This is a fixed table in `brcm_pcie_setup()` of the Linux
-   `pcie-brcmstb` driver and must be ported exactly.
-2. Wait for `PCIE_STATUS.PHYLINK_UP`, then `.DL_ACTIVE`.
-3. Configure the RC BARs and the UBUS remaps that provide config space, and the
-   CPU to PCIe outbound window.
-4. **32 bit specific:** the VL805 BAR defaults to `0x6_00000000`, which a 32 bit
-   ARM cannot address. The root bridge must reprogram the BAR into a 32 bit
-   window.
-5. Implement `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL` for this root complex. Note that
-   this tree has no producer of that protocol at all: `PciBusDxe` and `XhciDxe`
-   exist but nothing feeds them, so the root bridge is new code, not
-   configuration.
-6. Then the existing drivers: `PciBusDxe`, `XhciDxe`, `UsbBusDxe`, `UsbKbDxe`.
+PCI memory 0xF8000000..0xFBFFFFFF maps to CPU **0x600000000**, which a 32 bit ARM
+cannot address. The port must choose its own 32 bit CPU side address for the
+outbound window. DMA to the first 3 GB of DRAM is fine as is.
 
-Also worth testing, because it is free: `dtparam=pciex1` in `config.txt`. If the
-firmware's own PCIe power policy depends on it, it may keep the block clocked and
-make the whole power-up path unnecessary.
+## The reset and power sequence Linux uses on BCM2711
+
+From `bcm2711_cfg` in `pcie-brcmstb.c`, BCM2711 uses the **generic** helpers:
+
+```
+.perst_set          = brcm_pcie_perst_set_generic,
+.bridge_sw_init_set = brcm_pcie_bridge_sw_init_set_generic,
+.num_inbound_wins   = 3,
+```
+
+and both helpers operate on the same register, `PCIE_RGR1_SW_INIT_1`, whose offset
+comes from `pcie_offsets[RGR1_SW_INIT_1]`:
+
+```
+#define RGR1_SW_INIT_1_INIT_GENERIC_MASK   0x2
+#define RGR1_SW_INIT_1_INIT_GENERIC_SHIFT  0x1
+```
+
+- `bridge_sw_init_set(val)`: clear mask `0x2`, insert `val << 1`
+- `perst_set(val)`: insert `val` at `PCIE_RGR1_SW_INIT_1_PERST_MASK`
+
+`brcm_pcie_setup()` then runs, in order:
+
+1. `bridge_sw_init_set(1)` - hold the bridge in reset
+2. `perst_set(1)` - assert PERST# (BCM2711 only)
+3. sleep 100..200 us
+4. `bridge_sw_init_set(0)` - release the bridge
+5. read `HARD_DEBUG`, clear `SERDES_IDDQ` (0x08000000), write back
+6. sleep 100..200 us
+7. `MISC_CTRL`: SCB_ACCESS_EN=1, CFG_READ_UR_MODE=1, MAX_BURST_SIZE=0 (128 B for
+   BCM2711), RCB_MPS_MODE=1, RCB_64B_MODE=1
+8. inbound windows (3 of them), RC mode check, SCB sizes from memory controller size
+9. L0s and link width in `PCIE_RC_CFG_PRIV1_LINK_CAPABILITY`
+10. class code 0x060400 in `PCIE_RC_CFG_PRIV1_ID_VAL3`
+11. outbound windows
+12. endian mode in `PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1`
+
+No clock or reset controller is needed: the DT declares none for this node and
+`brcm_pcie_probe` only takes them optionally, so the firmware leaves the PCIe clock
+running. An earlier conclusion in this branch that the firmware powers PCIe down,
+and the mailbox clock hunt that followed, were both wrong and are superseded here.
+
+## Still to look up in the local linux tree
+
+- `pcie_offsets[RGR1_SW_INIT_1]` - the register offset for BCM2711
+- `RGR1_SW_INIT_1_PERST_MASK` - the PERST bit inside that register
+
+Both are in `drivers/pci/controller/pcie-brcmstb.c`; grep for `pcie_offsets` and
+`RGR1_SW_INIT_1_PERST_MASK`.
+
+## Remaining work after the reset sequence
+
+1. Wait for `PCIE_STATUS.PHYLINK_UP`, then `.DL_ACTIVE` (0x4068).
+2. Configure RC BARs and UBUS remaps for config space, plus the outbound window
+   with a **32 bit** CPU side address of our choosing.
+3. Reprogram the VL805 BAR out of `0x6_00000000` into that window.
+4. Implement `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`. This tree has no producer of that
+   protocol at all, so it is new code, not configuration.
+5. Then the existing drivers: `PciBusDxe`, `XhciDxe`, `UsbBusDxe`, `UsbKbDxe`.
 
 ## Files
 
-- `Pi3BoardPkg/Drivers/Bcm2711PcieDxe/` - the probe and the start of bring-up
-- `Pi2BoardPkg/Library/Pi2BoardLib/Pi2BoardMem.c` - the PCIe mapping
+- `Pi3BoardPkg/Drivers/Bcm2711PcieDxe/` - probe, plus the start of bring-up
+- `Pi2BoardPkg/Library/Pi2BoardLib/Pi2BoardMem.c` - maps
+  `0xFC000000..0xFDFFFFFF` as device memory so the root complex is reachable

@@ -89,9 +89,9 @@ ArmPlatformGetVirtualMemoryMap (
   // Map 0x7D000000..0x7DFFFFFF as device memory, before the SoC entry because
   // regions are filled in ascending order.
   //
-  VirtualMemoryTable[++Index].PhysicalBase = 0x7D000000;
-  VirtualMemoryTable[Index].VirtualBase    = 0x7D000000;
-  VirtualMemoryTable[Index].Length         = 0x01000000;
+  VirtualMemoryTable[++Index].PhysicalBase = 0xFC000000;
+  VirtualMemoryTable[Index].VirtualBase    = 0xFC000000;
+  VirtualMemoryTable[Index].Length         = 0x02000000;
   VirtualMemoryTable[Index].Attributes     = SOC_REGISTERS_ATTRIBUTES;
 
   // SOC peripheral registers.
