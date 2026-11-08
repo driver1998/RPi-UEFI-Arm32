@@ -517,8 +517,8 @@ Bcm2711PcieInitialize (
     DEBUG ((
       DEBUG_INIT,
       "Bcm2711Pcie: xHCI CAPLENGTH/HCIVERSION at 0x%08x = 0x%08x\n",
-      (UINT32)PCIE_WINDOW_DEVICE_ADDR,
-      MmioRead32 (PCIE_WINDOW_DEVICE_ADDR)));
+      (UINT32)PCIE_WINDOW_CPU_BASE,
+      MmioRead32 (PCIE_WINDOW_CPU_BASE)));
 
     //
     // Distinguish the two explanations for a zero read, which need opposite
@@ -528,10 +528,10 @@ Bcm2711PcieInitialize (
     // Watch the log speed as well: accesses that go nowhere are slow, a decoded
     // access is immediate.
     //
-    Before  = MmioRead32 (PCIE_WINDOW_DEVICE_ADDR);
-    MmioWrite32 (PCIE_WINDOW_DEVICE_ADDR, 0x5A5A1234);
-    Written = MmioRead32 (PCIE_WINDOW_DEVICE_ADDR);
-    MmioWrite32 (PCIE_WINDOW_DEVICE_ADDR, Before);
+    Before  = MmioRead32 (PCIE_WINDOW_CPU_BASE);
+    MmioWrite32 (PCIE_WINDOW_CPU_BASE, 0x5A5A1234);
+    Written = MmioRead32 (PCIE_WINDOW_CPU_BASE);
+    MmioWrite32 (PCIE_WINDOW_CPU_BASE, Before);
 
     DEBUG ((
       DEBUG_INIT,
@@ -541,8 +541,8 @@ Bcm2711PcieInitialize (
     DEBUG ((
       DEBUG_INIT,
       "Bcm2711Pcie: window probe: +4 = 0x%08x, +0x100 = 0x%08x\n",
-      MmioRead32 (PCIE_WINDOW_DEVICE_ADDR + 4),
-      MmioRead32 (PCIE_WINDOW_DEVICE_ADDR + 0x100)));
+      MmioRead32 (PCIE_WINDOW_CPU_BASE + 4),
+      MmioRead32 (PCIE_WINDOW_CPU_BASE + 0x100)));
 
     //
     PciePrintDevice (1, 0, 0);
