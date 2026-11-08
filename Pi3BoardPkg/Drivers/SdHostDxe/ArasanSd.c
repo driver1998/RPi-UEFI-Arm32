@@ -133,6 +133,7 @@
 #define SDHCI_TM_MULTI_BLOCK        (1U << 4)
 
 #define SDHCI_BLOCK_BYTE_LENGTH     512
+#define SDHCI_BLOCK_BOUNDARY_4K     0x7000
 
 //
 // Block count programmed for a multi block transfer. MmcDxe caps its own
@@ -513,7 +514,15 @@ ArasanSendCommand (
             TransferMode |= SDHCI_TM_READ;
         }
 
-        MmioWrite16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT, SDHCI_BLOCK_BYTE_LENGTH);
+        //
+        // Block size in bits[11:0] and the SDMA buffer boundary in bits[15:12].
+        // A register dump of the working Linux configuration has 0x7200 here,
+        // i.e. block size 512 with a boundary of 7 (4 KiB). The boundary is only
+        // meaningful for DMA, but matching the known-good descriptor exactly
+        // removes it as a variable.
+        //
+        MmioWrite16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT,
+                     SDHCI_BLOCK_BYTE_LENGTH | SDHCI_BLOCK_BOUNDARY_4K);
         MmioWrite16 (ARASAN_SD_BASE + SDHCI_BLOCK_SIZE_COUNT + 2, BlockCount);
         MmioWrite16 (ARASAN_SD_BASE + SDHCI_TRANSFER_MODE, TransferMode);
 
