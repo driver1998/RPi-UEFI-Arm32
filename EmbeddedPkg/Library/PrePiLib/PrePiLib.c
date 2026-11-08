@@ -48,6 +48,8 @@ LoadPeCoffImage (
   ImageContext.ImageRead = PeCoffLoaderImageReadFromMemory;
 
   Status = PeCoffLoaderGetImageInfo (&ImageContext);
+  DEBUG ((DEBUG_INIT, "    LoadPeCoffImage: GetImageInfo returned 0x%x, size 0x%x\n",
+          (UINT32)Status, (UINT32)ImageContext.ImageSize));
   ASSERT_EFI_ERROR (Status);
 
 
@@ -55,6 +57,7 @@ LoadPeCoffImage (
   // Allocate Memory for the image
   //
   Buffer = AllocatePages (EFI_SIZE_TO_PAGES((UINT32)ImageContext.ImageSize));
+  DEBUG ((DEBUG_INIT, "    LoadPeCoffImage: buffer 0x%08x\n", (UINT32)(UINTN)Buffer));
   ASSERT (Buffer != 0);
 
 
@@ -64,12 +67,14 @@ LoadPeCoffImage (
   // Load the image to our new buffer
   //
   Status = PeCoffLoaderLoadImage (&ImageContext);
+  DEBUG ((DEBUG_INIT, "    LoadPeCoffImage: LoadImage returned 0x%x\n", (UINT32)Status));
   ASSERT_EFI_ERROR (Status);
 
   //
   // Relocate the image in our new buffer
   //
   Status = PeCoffLoaderRelocateImage (&ImageContext);
+  DEBUG ((DEBUG_INIT, "    LoadPeCoffImage: RelocateImage returned 0x%x\n", (UINT32)Status));
   ASSERT_EFI_ERROR (Status);
 
 
