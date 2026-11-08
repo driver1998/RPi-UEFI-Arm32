@@ -382,6 +382,7 @@ Bcm2711PcieInitialize (
 
   if ((Status & PCIE_STATUS_DL_ACTIVE) != 0) {
     UINT32  Command;
+    UINT32  Index;
 
     DEBUG ((DEBUG_INIT, "Bcm2711Pcie: data link is active\n"));
 
@@ -422,6 +423,31 @@ Bcm2711PcieInitialize (
     // the VL805 line was printed.
     //
     PciePrintDevice (1, 0, 0);
+
+    //
+    // Dump the base address registers. The device tree assigns PCI memory from
+    // 0xF8000000 and maps it to CPU 0x600000000, which a 32 bit ARM cannot reach,
+    // so the VL805's BARs are expected to sit above 4 GB. The exact layout decides
+    // how the outbound window has to be built: a 64 bit memory BAR means rewriting
+    // two registers, and the type bits say whether it is memory at all.
+    //
+    for (Index = 0; Index < 6; Index++) {
+      DEBUG ((
+        DEBUG_INIT,
+        "Bcm2711Pcie: 1:0.0 BAR%d (0x%02x) = 0x%08x\n",
+        Index, 0x10 + (Index * 4),
+        PcieReadConfig32 (1, 0, 0, 0x10 + (Index * 4))
+        ));
+    }
+
+    DEBUG ((
+      DEBUG_INIT,
+      "Bcm2711Pcie: 1:0.0 command=0x%04x status=0x%04x revision=0x%02x irq=0x%02x pin=0x%02x\n",
+      PcieReadConfig32 (1, 0, 0, 0x04) & 0xFFFF,
+      (PcieReadConfig32 (1, 0, 0, 0x04) >> 16) & 0xFFFF,
+      PcieReadConfig32 (1, 0, 0, 0x08) & 0xFF,
+      PcieReadConfig32 (1, 0, 0, 0x3C) & 0xFF,
+      (PcieReadConfig32 (1, 0, 0, 0x3C) >> 8) & 0xFF));
 
     return EFI_SUCCESS;
   }
