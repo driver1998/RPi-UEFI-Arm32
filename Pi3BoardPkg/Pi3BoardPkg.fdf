@@ -150,6 +150,7 @@ READ_LOCK_STATUS   = TRUE
   #
   INF Pi3BoardPkg/Drivers/MmcDxe/MmcDxe.inf
   INF Pi3BoardPkg/Drivers/SdHostDxe/SdHostDxe.inf
+  INF Pi3BoardPkg/Drivers/Bcm2711PcieDxe/Bcm2711PcieDxe.inf
 
   #
   # ACPI

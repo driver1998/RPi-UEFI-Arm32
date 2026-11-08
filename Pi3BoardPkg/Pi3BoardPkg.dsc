@@ -665,6 +665,11 @@
   Pi3BoardPkg/Drivers/SdHostDxe/SdHostDxe.inf
 
   #
+  # PCIe root complex probe (BCM2711)
+  #
+  Pi3BoardPkg/Drivers/Bcm2711PcieDxe/Bcm2711PcieDxe.inf
+
+  #
   # ARM GIC+GIT Drivers
   #
   # NOTE: The BCM2836 does not include an ARM GIC so we must use

@@ -1,0 +1,34 @@
+## @file
+#  Dump the BCM2711 PCIe root complex state left by the boot firmware.
+#
+#  Copyright (c) 2024, the EDK2 Raspberry Pi 4 port authors. All rights reserved.
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = Bcm2711Pcie
+  FILE_GUID                      = 9C3D6A21-4F58-4C7B-9E2A-1B6F0D3C8E47
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+
+  ENTRY_POINT                    = Bcm2711PcieInitialize
+
+[Sources.common]
+  Bcm2711PcieDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  Pi2BoardPkg/Pi2BoardPkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  DebugLib
+  IoLib
+
+[Protocols]
+
+[depex]
+  TRUE
