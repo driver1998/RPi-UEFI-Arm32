@@ -50,6 +50,43 @@ So the remaining problem is entirely on the CPU side of the window: the root
 complex is not claiming 0xC0000000 even though WIN0_BASE_LIMIT and WIN0_BASE_HI
 read back the values the encoding says they should.
 
+## The most likely blocker: the window may have to live above 4 GB
+
+Matching every register to a dump taken from the same controller under Linux did
+not fix it. That dump is worth keeping:
+
+    Linux, with PCIe working
+    WIN0_LO         = 0xC0000000
+    WIN0_HI         = 0x00000000
+    WIN0_BASE_LIMIT = 0x3FF00000     base_mb 0, limit_mb 0x3FF
+    WIN0_BASE_HI    = 0x00000006
+    WIN0_LIMIT_HI   = 0x00000006
+    MISC_CTRL       = 0x88003480     SCB0 size 17, a 4 GB decode range
+    PCIE_STATUS     = 0x000000b0
+
+Combining the base and hi fields, Linux places the **CPU side** of the window at
+`0x6_00000000`, above 4 GB, and the PCI side at 0xC0000000. This port can only try
+CPU side addresses below 4 GB, because `ArmConfigureMmu` in this tree builds ARMv7
+**short descriptor** translation tables, which encode a 32 bit physical address
+only.
+
+A 32 bit Raspberry Pi OS does use PCIe on this board, but it enables **LPAE**, so
+its MMU can express `0x6_00000000`. Our MMU cannot.
+
+That makes two possibilities, and they need quite different work:
+
+1. **The root complex only accepts a window CPU address at 4 GB or above.** Then
+   the port needs long descriptor / LPAE translation, a substantial change to
+   `ArmPkg/Library/ArmLib/ArmV7/ArmV7Mmu.c` and to every place that assumes a 32
+   bit physical address. Worth confirming before starting.
+2. **A below-4 GB window is acceptable and something else is still unset.** Then a
+   further comparison against Linux is the way to find it, for instance with a
+   32 bit kernel where the window necessarily sits below 4 GB.
+
+Distinguishing these two is the next thing to do, before writing more code. Every
+attempt so far that changed a register value was a guess, and six of them in a row
+did not move the failure.
+
 ## The next experiment, and why it is the right one
 
 The read returns 0 without faulting, which is ambiguous: it is the value both of a
