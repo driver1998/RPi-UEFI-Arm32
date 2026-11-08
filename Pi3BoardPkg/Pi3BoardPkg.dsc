@@ -34,6 +34,16 @@
 
 [LibraryClasses.common]
   ArmLib|ArmPkg/Library/ArmLib/ArmV7/ArmV7Lib.inf
+  #
+  # CacheMaintenanceLib must be the ARM implementation. MdePkg's
+  # BaseCacheMaintenanceLib has an ArmCache.c whose eight functions are all
+  # ASSERT(FALSE) stubs, so nothing is ever cleaned or invalidated through that
+  # interface. That is harmless while the caches are off, but with the
+  # instruction cache enabled the freshly loaded DXE core image is never
+  # invalidated and the core fetches stale instructions and hangs inside
+  # LoadDxeCoreFromFv.
+  #
+  CacheMaintenanceLib|ArmPkg/Library/ArmCacheMaintenanceLib/ArmCacheMaintenanceLib.inf
   ArmPlatformLib|Pi2BoardPkg/Library/Pi2BoardLib/Pi2BoardLib.inf
   ArmCpuLib|ArmPkg/Drivers/ArmCpuLib/ArmCortexA5xLib/ArmCortexA5xLib.inf
 
