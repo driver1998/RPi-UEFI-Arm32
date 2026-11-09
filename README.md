@@ -4,7 +4,7 @@ An ARM32 UEFI firmware for the Raspberry Pi 4, built from the Microsoft
 [ms-iot RPi-UEFI](https://github.com/ms-iot/RPi-UEFI) fork of
 [Linaro EDK2 2015.01](https://git.linaro.org/uefi/linaro-edk2.git). That fork
 targets Windows 10 IoT Core on the Pi 2 and Pi 3; this branch moves it to
-BCM2711 while deliberately keeping the Pi 3 naming, so the build script and the
+BCM2711. The Pi 3 naming is kept for now, so the build script and the
 packages are still called `BuildPi3Board.bat` and `Pi3BoardPkg`. There is no
 attempt to stay compatible with Pi 3 hardware.
 
@@ -14,9 +14,9 @@ Windows 10 IoT Core background, is preserved unchanged in
 
 ## Status
 
-The firmware boots to the BDS menu on a Raspberry Pi 4 and is stable there. The
-port is a bring-up: several subsystems work, several are known incomplete, and each
-incomplete one is documented rather than left as a surprise.
+The firmware boots to the BDS menu on a Raspberry Pi 4 (8GB version) and is 
+stable there. The port is a bring-up: several subsystems work, several are known 
+incomplete, and each incomplete one is documented rather than left as a surprise.
 
 | Area | State |
 |---|---|
@@ -145,7 +145,7 @@ The original licence and code of conduct from the ms-iot project apply; see
 
 As what can be seen in the commit history, this port is **mostly vibecoded**, using DeepSeek 4.1 Flash 1017. So use it at your own risk. 
 
-With that said, every changed here is tested, validated by a real human on real hardware.
+With that said, every change here is tested, validated by a real human on real hardware.
 
 ## Acknowledgment
 
