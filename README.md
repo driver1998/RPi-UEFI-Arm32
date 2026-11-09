@@ -61,7 +61,7 @@ production `0x80000003`.
 
 The build environment is the one described in [README.ms-iot.md](README.ms-iot.md):
 the `RPi-UEFI` and `Toolchains` folders must sit side by side, and the GNU ARM
-Embedded 4.8 toolchain is expected at `D:\Toolchains\Arm`.
+Embedded 4.8 toolchain is expected at `Toolchains\Arm`.
 
 ```
 BuildPi3Board.bat
